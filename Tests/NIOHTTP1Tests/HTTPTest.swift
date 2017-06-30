@@ -13,7 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 import XCTest
-@testable import NIO
+import NIO
 @testable import NIOHTTP1
 
 private final class TestChannelInboundHandler: ChannelInboundHandler {

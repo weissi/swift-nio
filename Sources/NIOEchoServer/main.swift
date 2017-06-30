@@ -13,25 +13,26 @@
 //===----------------------------------------------------------------------===//
 import NIO
 
-private final class EchoHandler: ChannelInboundHandler {
+private final class EchoHandler: TypedChannelInboundHandler {
     public typealias InboundIn = ByteBuffer
     public typealias OutboundOut = ByteBuffer
+    public typealias InboundUserEventIn = Never /* FIXME: shouldn't be necessary as it has a default value, compiler bug? */
+    public typealias InboundUserEventOut = Never /* FIXME: shouldn't be necessary as it has a default value, compiler bug? */
 
-    public func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
+    public func channelRead(ctx: Context, data: ByteBuffer) {
         // As we are not really interested getting notified on success or failure we just pass nil as promise to
         // reduce allocations.
         ctx.write(data, promise: nil)
     }
 
     // Flush it out. This can make use of gathering writes if multiple buffers are pending
-    public func channelReadComplete(ctx: ChannelHandlerContext) {
-
+    public func channelReadComplete(ctx: Context) {
         // As we are not really interested getting notified on success or failure we just pass nil as promise to
         // reduce allocations.
         ctx.flush()
     }
 
-    public func errorCaught(ctx: ChannelHandlerContext, error: Error) {
+    public func errorCaught(ctx: Context, error: Error) {
         print("error: ", error)
 
         // As we are not really interested getting notified on success or failure we just pass nil as promise to
@@ -49,7 +50,7 @@ let bootstrap = ServerBootstrap(group: group)
     .childChannelInitializer { channel in
         // Ensure we don't read faster then we can write by adding the BackPressureHandler into the pipeline.
         channel.pipeline.add(handler: BackPressureHandler()).then { v in
-            channel.pipeline.add(handler: EchoHandler())
+            channel.pipeline.add(handler: makeUntyped(EchoHandler()))
         }
     }
 
