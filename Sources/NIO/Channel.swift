@@ -156,6 +156,12 @@ internal protocol SelectableChannel: Channel {
     /// Called when the `SelectableChannel` is ready to be read.
     func readable()
 
+    /// Called when the read side of the `SelectableChannel` hit EOF.
+    func readEOF()
+
+    /// Called when the `SelectableChannel` was reset (ie. is now unusable)
+    func reset()
+
     /// Creates a registration for the `interested` `IOEvent` suitable for this `Channel`.
     ///
     /// - parameters:

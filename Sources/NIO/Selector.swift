@@ -181,6 +181,17 @@ final class Selector<R: Registration> {
     }
 
     private func register_kqueue<S: Selectable>(selectable: S, interested: SelectorEventSet, oldInterested: SelectorEventSet?) throws {
+        let differences = (oldInterested ?? SelectorEventSet.reset).symmetricDifference(interested)
+        assert(interested.contains(.reset))
+        assert(oldInterested?.contains(.reset) ?? true)
+
+        func apply(event: SelectorEventSet) -> UInt16? {
+            guard differences.contains(event) else {
+                return nil
+            }
+            return UInt16(interested.contains(event) ? EV_ADD : EV_DELETE)
+        }
+
         // Allocated on the stack
         var events = (kevent(), kevent())
         try selectable.withUnsafeFileDescriptor { fd in
@@ -198,60 +209,31 @@ final class Selector<R: Registration> {
             events.1.udata = nil
         }
 
-        events.0.flags = UInt16(EV_DELETE)
-        events.1.flags = UInt16(EV_DELETE)
-        if interested.contains(.read) {
-            events.0.flags = UInt16(EV_ADD)
-        }
-        if interested.contains(.write) {
-            events.1.flags = UInt16(EV_ADD)
-        }
-
-        var offset: Int = 0
-        var numEvents: Int32 = 2
-
-        if let old = oldInterested {
-            switch old {
-            case .read:
-                if events.1.flags == UInt16(EV_DELETE) {
-                    numEvents -= 1
-                }
-            case .write:
-                if events.0.flags == UInt16(EV_DELETE) {
-                    offset += 1
-                    numEvents -= 1
-                }
-            case .reset:
-                // Only discard the delete events
-                if events.0.flags == UInt16(EV_DELETE) {
-                    offset += 1
-                    numEvents -= 1
-                }
-                if events.1.flags == UInt16(EV_DELETE) {
-                    numEvents -= 1
-                }
-            default:
-                // No need to adjust anything
-                break
-            }
-        } else {
-            // If its not reregister operation we MUST NOT include EV_DELETE as otherwise kevent will fail with ENOENT.
-            if events.0.flags == UInt16(EV_DELETE) {
-                offset += 1
-                numEvents -= 1
-            }
-            if events.1.flags == UInt16(EV_DELETE) {
-                numEvents -= 1
-            }
+        let numEvents: Int32
+        let offset: Int
+        switch (apply(event: .read), apply(event: .write)) {
+        case (.none, .none):
+            return
+        case (.some(let r), .none):
+            events.0.flags = r
+            numEvents = 1
+            offset = 0
+        case (.none, .some(let w)):
+            events.1.flags = w
+            numEvents = 1
+            offset = 1
+        case (.some(let r), .some(let w)):
+            events.0.flags = r
+            events.1.flags = w
+            numEvents = 2
+            offset = 0
         }
 
-        if numEvents > 0 {
-            try withUnsafeMutableBytes(of: &events) { event_ptr in
-                precondition(MemoryLayout<kevent>.size * 2 == event_ptr.count)
-                let ptr = event_ptr.baseAddress?.bindMemory(to: kevent.self, capacity: 2)
+        try withUnsafeMutableBytes(of: &events) { event_ptr in
+            precondition(MemoryLayout<kevent>.size * 2 == event_ptr.count)
+            let ptr = event_ptr.baseAddress?.bindMemory(to: kevent.self, capacity: 2)
 
-                try keventChangeSetOnly(event: ptr!.advanced(by: offset), numEvents: numEvents)
-            }
+            try keventChangeSetOnly(event: ptr!.advanced(by: offset), numEvents: numEvents)
         }
     }
 #endif
@@ -262,7 +244,8 @@ final class Selector<R: Registration> {
     ///     - selectable: The `Selectable` to register.
     ///     - interested: The `IOEvent`s in which we are interested and want to be notified about.
     ///     - makeRegistration: Creates the registration data for the given `IOEvent`.
-    func register<S: Selectable>(selectable: S, interested: SelectorEventSet = .read, makeRegistration: (SelectorEventSet) -> R) throws {
+    func register<S: Selectable>(selectable: S, interested: SelectorEventSet, makeRegistration: (SelectorEventSet) -> R) throws {
+        assert(interested.contains(.reset))
         guard self.lifecycleState == .open else {
             throw IOError(errnoCode: EBADF, reason: "can't register on selector as it's \(self.lifecycleState).")
         }
@@ -400,21 +383,36 @@ final class Selector<R: Registration> {
 
         for i in 0..<ready {
             let ev = events[i]
+            var selectorEvent: SelectorEventSet = ._none
             switch Int32(ev.filter) {
             case EVFILT_USER:
                 // woken-up by the user, just ignore
-                break
+                continue
             case EVFILT_READ:
-                if let registration = registrations[Int(ev.ident)] {
-                    try body((SelectorEvent(io: .read, registration: registration)))
+                if Int32(ev.flags) & EV_EOF != 0 {
+                    selectorEvent.formUnion(.readEOF)
+                    precondition(ev.fflags == 0, "READ ev.fflags = \(ev.fflags)")
+                }
+                selectorEvent.formUnion(.read)
+            case EVFILT_EXCEPT:
+                if Int32(ev.flags) & EV_EOF != 0 {
+                    selectorEvent.formUnion(.readEOF)
+                    precondition(ev.fflags == 0, "EXCEPT ev.fflags = \(ev.fflags)")
                 }
             case EVFILT_WRITE:
-                if let registration = registrations[Int(ev.ident)] {
-                    try body((SelectorEvent(io: .write, registration: registration)))
-                }
+                selectorEvent.formUnion(.write)
             default:
                 // We only use EVFILT_USER, EVFILT_READ and EVFILT_WRITE.
                 fatalError("unexpected filter \(ev.filter)")
+            }
+            if selectorEvent != ._none {
+                if let registration = registrations[Int(ev.ident)] {
+                    if !registration.interested.contains(.readEOF) && selectorEvent.contains(.readEOF) {
+                        selectorEvent.subtract(.readEOF)
+                    }
+                    assert(selectorEvent.isSubset(of: registration.interested))
+                    try body((SelectorEvent(io: selectorEvent, registration: registration)))
+                }
             }
         }
 
@@ -491,6 +489,7 @@ struct SelectorEvent<R> {
     ///     - writable: `true` if writable
     ///     - registration: The registration that belongs to the event.
     init(readable: Bool, writable: Bool, registration: R) {
+        fatalError("bad bad constructor")
         var io: SelectorEventSet = .reset
         if readable {
             io.formUnion(.read)
@@ -580,10 +579,11 @@ struct SelectorEventSet: OptionSet, Equatable {
 
     let rawValue: UInt8
 
-    static let reset = SelectorEventSet(rawValue: 0)
-    static let readEOF = SelectorEventSet(rawValue: 1 << 0)
-    static let read = SelectorEventSet(rawValue: 1 << 1)
-    static let write = SelectorEventSet(rawValue: 1 << 2)
+    static let _none = SelectorEventSet(rawValue: 0)
+    static let reset = SelectorEventSet(rawValue: 1 << 0)
+    static let readEOF = SelectorEventSet(rawValue: 1 << 1)
+    static let read = SelectorEventSet(rawValue: 1 << 2)
+    static let write = SelectorEventSet(rawValue: 1 << 3)
 
     init(rawValue: SelectorEventSet.RawValue) {
         self.rawValue = rawValue

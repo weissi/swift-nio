@@ -433,6 +433,14 @@ internal final class SelectableEventLoop: EventLoop {
 
         if ev.contains(.read) {
             channel.readable()
+
+            guard channel.selectable.isOpen else {
+                return
+            }
+        }
+
+        if ev.contains(.readEOF) {
+            channel.readEOF()
         }
     }
 
@@ -475,7 +483,6 @@ internal final class SelectableEventLoop: EventLoop {
             // Block until there are events to handle or the selector was woken up
             /* for macOS: in case any calls we make to Foundation put objects into an autoreleasepool */
             try withAutoReleasePool {
-
                 try selector.whenReady(strategy: currentSelectorStrategy(nextReadyTask: nextReadyTask)) { ev in
                     switch ev.registration {
                     case .serverSocketChannel(let chan, _):

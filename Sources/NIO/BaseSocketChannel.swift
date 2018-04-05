@@ -181,7 +181,14 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
     private let addressesCached: AtomicBox<Box<(local:SocketAddress?, remote:SocketAddress?)>> = AtomicBox(value: Box((local: nil, remote: nil)))
     private let bufferAllocatorCached: AtomicBox<Box<ByteBufferAllocator>>
 
-    internal var interestedEvent: SelectorEventSet = .reset
+    internal var interestedEvent: SelectorEventSet = [.readEOF, .reset] {
+        didSet {
+            assert(self.interestedEvent.contains(.reset), "impossible to unregister for reset")
+            if !self.interestedEvent.contains(.readEOF) && self.interestedEvent != .reset {
+                print("odd \(self.interestedEvent)")
+            }
+        }
+    }
 
     var readPending = false
     var pendingConnect: EventLoopPromise<Void>?
@@ -632,7 +639,7 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
             return
         }
 
-        interestedEvent = .reset
+        self.interestedEvent = .reset // yes, this is invalid (which is good as we are closed)
         do {
             try selectableEventLoop.deregister(channel: self)
         } catch let err {
@@ -685,7 +692,7 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
         // Was not registered yet so do it now.
         do {
             // We always register with interested .none and will just trigger readIfNeeded0() later to re-register if needed.
-            try self.safeRegister(interested: .reset)
+            try self.safeRegister(interested: [.readEOF, .reset])
             self.lifecycleManager.register(promise: promise)()
         } catch {
             promise?.fail(error: error)
@@ -737,6 +744,14 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
             assert(self.lifecycleManager.isRegistered)
             unregisterForWritable()
         }
+    }
+
+    final func readEOF() {
+        print("read EOF")
+    }
+
+    final func reset() {
+        fatalError("\(#function)")
     }
 
     public final func readable() {
@@ -867,7 +882,7 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
         assert(self.lifecycleManager.isRegistered)
 
         guard self.isOpen else {
-            interestedEvent = .reset
+            assert(self.interestedEvent == .reset, "interestedEvent=\(self.interestedEvent) event though we're closed")
             return
         }
         if interested == interestedEvent {

@@ -69,11 +69,11 @@ class SelectorTest: XCTestCase {
         }
 
         // Register both sockets with .write. This will ensure both are ready when calling selector.whenReady.
-        try selector.register(selectable: socket1 , interested: .write, makeRegistration: { ev in
+        try selector.register(selectable: socket1 , interested: [.reset, .write], makeRegistration: { ev in
             TestRegistration(interested: ev, socket: socket1)
         })
 
-        try selector.register(selectable: socket2 , interested: .write, makeRegistration: { ev in
+        try selector.register(selectable: socket2 , interested: [.reset, .write], makeRegistration: { ev in
             TestRegistration(interested: ev, socket: socket2)
         })
 
