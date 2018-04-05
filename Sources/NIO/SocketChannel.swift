@@ -122,7 +122,7 @@ final class SocketChannel: BaseSocketChannel<Socket> {
         var result = ReadResult.none
         for i in 1...maxMessagesPerRead {
             guard self.isOpen && !self.inputShutdown else {
-                return result
+                throw ChannelError.eof
             }
             // Reset reader and writerIndex and so allow to have the buffer filled again. This is better here than at
             // the end of the loop to not do an allocation when the loop exits.
@@ -388,7 +388,7 @@ final class ServerSocketChannel: BaseSocketChannel<ServerSocket> {
         var result = ReadResult.none
         for _ in 1...maxMessagesPerRead {
             guard self.isOpen else {
-                return result
+                throw ChannelError.eof
             }
             if let accepted =  try self.socket.accept(setNonBlocking: true) {
                 readPending = false
@@ -568,7 +568,7 @@ final class DatagramChannel: BaseSocketChannel<Socket> {
 
         for i in 1...self.maxMessagesPerRead {
             guard self.isOpen else {
-                return readResult
+                throw ChannelError.eof
             }
             buffer.clear()
 

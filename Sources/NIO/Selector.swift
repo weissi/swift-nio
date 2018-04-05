@@ -41,6 +41,37 @@ private extension Optional {
     }
 }
 
+private struct KQueueEventFilterSet: OptionSet, Equatable {
+    typealias RawValue = UInt8
+
+    let rawValue: UInt8
+
+    static let _none = KQueueEventFilterSet(rawValue: 0)
+    static let except = KQueueEventFilterSet(rawValue: 1 << 1)
+    static let read = KQueueEventFilterSet(rawValue: 1 << 2)
+    static let write = KQueueEventFilterSet(rawValue: 1 << 3)
+
+    init(rawValue: SelectorEventSet.RawValue) {
+        self.rawValue = rawValue
+    }
+}
+
+extension KQueueEventFilterSet {
+    init(selectorEventSet: SelectorEventSet) {
+        var thing: KQueueEventFilterSet = .init(rawValue: 0)
+        if selectorEventSet.contains(.read) {
+            thing.formUnion(.read)
+        }
+        if selectorEventSet.contains(.write) {
+            thing.formUnion(.write)
+        }
+        if selectorEventSet.contains(.readEOF) && !thing.contains(.read) {
+            thing.formUnion(.except)
+        }
+        self = thing
+    }
+}
+
 ///  A `Selector` allows a user to register different `Selectable` sources to an underlying OS selector, and for that selector to notify them once IO is ready for them to process.
 ///
 /// This implementation offers an consistent API over epoll (for linux) and kqueue (for Darwin, BSD).
@@ -181,59 +212,42 @@ final class Selector<R: Registration> {
     }
 
     private func register_kqueue<S: Selectable>(selectable: S, interested: SelectorEventSet, oldInterested: SelectorEventSet?) throws {
-        let differences = (oldInterested ?? SelectorEventSet.reset).symmetricDifference(interested)
+        let oldKQueueFilters = oldInterested.map { KQueueEventFilterSet(selectorEventSet: $0) } ?? KQueueEventFilterSet._none
+        let newKQueueFilters = KQueueEventFilterSet(selectorEventSet: interested)
+        let differences = oldKQueueFilters.symmetricDifference(newKQueueFilters)
         assert(interested.contains(.reset))
         assert(oldInterested?.contains(.reset) ?? true)
 
-        func apply(event: SelectorEventSet) -> UInt16? {
+        func apply(event: KQueueEventFilterSet) -> UInt16? {
             guard differences.contains(event) else {
                 return nil
             }
-            return UInt16(interested.contains(event) ? EV_ADD : EV_DELETE)
+            return UInt16(newKQueueFilters.contains(event) ? EV_ADD : EV_DELETE)
         }
 
         // Allocated on the stack
-        var events = (kevent(), kevent())
+        var events = (kevent(), kevent(), kevent())
+//        print("from \(oldInterested) to \(interested)")
+//        print("from \(oldKQueueFilters.rawValue) \(newKQueueFilters.rawValue)")
         try selectable.withUnsafeFileDescriptor { fd in
+            try withUnsafeMutableBytes(of: &events) { event_ptr in
+                precondition(MemoryLayout<kevent>.size * 3 == event_ptr.count)
+                let ptr = event_ptr.baseAddress!.bindMemory(to: kevent.self, capacity: 3)
 
-            events.0.ident = UInt(fd)
-            events.0.filter = Int16(EVFILT_READ)
-            events.0.fflags = 0
-            events.0.data = 0
-            events.0.udata = nil
-
-            events.1.ident = UInt(fd)
-            events.1.filter = Int16(EVFILT_WRITE)
-            events.1.fflags = 0
-            events.1.data = 0
-            events.1.udata = nil
-        }
-
-        let numEvents: Int32
-        let offset: Int
-        switch (apply(event: .read), apply(event: .write)) {
-        case (.none, .none):
-            return
-        case (.some(let r), .none):
-            events.0.flags = r
-            numEvents = 1
-            offset = 0
-        case (.none, .some(let w)):
-            events.1.flags = w
-            numEvents = 1
-            offset = 1
-        case (.some(let r), .some(let w)):
-            events.0.flags = r
-            events.1.flags = w
-            numEvents = 2
-            offset = 0
-        }
-
-        try withUnsafeMutableBytes(of: &events) { event_ptr in
-            precondition(MemoryLayout<kevent>.size * 2 == event_ptr.count)
-            let ptr = event_ptr.baseAddress?.bindMemory(to: kevent.self, capacity: 2)
-
-            try keventChangeSetOnly(event: ptr!.advanced(by: offset), numEvents: numEvents)
+                var index: Int = 0
+                for (event, filter) in [(KQueueEventFilterSet.read, EVFILT_READ), (.write, EVFILT_WRITE), (.except, EVFILT_EXCEPT)] {
+                    if let flags = apply(event: event) {
+//                        print("fd \(fd), \(flags == EV_ADD ? "+" : "-")\(event.rawValue)")
+                        ptr[index].ident = UInt(fd)
+                        ptr[index].filter = Int16(filter)
+                        ptr[index].flags = flags
+                        index += 1
+                    }
+                }
+                if index > 0 {
+                    try keventChangeSetOnly(event: ptr, numEvents: Int32(index))
+                }
+            }
         }
     }
 #endif

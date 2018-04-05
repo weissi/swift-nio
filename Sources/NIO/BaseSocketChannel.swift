@@ -748,6 +748,18 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
 
     final func readEOF() {
         print("read EOF")
+        self.safeReregister(interested: self.interestedEvent.subtracting(.readEOF))
+
+        var didReceiveEOF = !self.lifecycleManager.isActive
+        while self.lifecycleManager.isActive {
+            var localDidReceiveEOF: Bool = false
+            self.readable0(didReceiveEOF: &localDidReceiveEOF)
+            didReceiveEOF = didReceiveEOF || localDidReceiveEOF
+            if didReceiveEOF {
+                break
+            }
+        }
+        assert(didReceiveEOF)
     }
 
     final func reset() {
@@ -755,8 +767,14 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
     }
 
     public final func readable() {
+        var didReceiveEOF = false
+        self.readable0(didReceiveEOF: &didReceiveEOF)
+    }
+
+    private final func readable0(didReceiveEOF: inout Bool) {
         assert(eventLoop.inEventLoop)
         assert(self.lifecycleManager.isActive)
+        didReceiveEOF = false
 
         defer {
             if self.isOpen && !self.readPending {
@@ -770,6 +788,7 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
             // ChannelError.eof is not something we want to fire through the pipeline as it just means the remote
             // peer closed / shutdown the connection.
             if let channelErr = err as? ChannelError, channelErr == ChannelError.eof {
+                didReceiveEOF = true
                 // Directly call getOption0 as we are already on the EventLoop and so not need to create an extra future.
                 if try! getOption0(option: ChannelOptions.allowRemoteHalfClosure) {
                     // If we want to allow half closure we will just mark the input side of the Channel
