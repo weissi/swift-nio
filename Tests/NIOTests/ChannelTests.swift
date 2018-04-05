@@ -1181,6 +1181,7 @@ public class ChannelTests: XCTestCase {
                     channel.pipeline.add(handler: verificationHandler)
                 }
             }
+            .channelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
             .connect(to: try! server.localAddress())
         let accepted = try server.accept()!
         defer {
@@ -1555,17 +1556,28 @@ public class ChannelTests: XCTestCase {
         XCTAssertNoThrow(try readFuture.wait())
     }
 
-    func testNoChannelReadIfNoAutoRead() throws {
+    func testNoChannelReadBeforeEOFIfNoAutoRead() throws {
         let group = MultiThreadedEventLoopGroup(numThreads: 1)
         defer {
             XCTAssertNoThrow(try group.syncShutdownGracefully())
         }
 
-        class NoChannelReadVerificationHandler: ChannelInboundHandler {
+        class VerifyNoReadBeforeEOFHandler: ChannelInboundHandler {
             typealias InboundIn = ByteBuffer
 
+            private var seenEOF: Bool = false
+
+            public func userInboundEventTriggered(ctx: ChannelHandlerContext, event: Any) {
+                if case .some(ChannelEvent.inputClosed) = event as? ChannelEvent {
+                    self.seenEOF = true
+                }
+                ctx.fireUserInboundEventTriggered(event)
+            }
+
             public func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
-                XCTFail("Should not be called as autoRead is false and we did not call read(), but received \(self.unwrapInboundIn(data))")
+                if self.seenEOF {
+                    XCTFail("Should not be called before seeing the EOF as autoRead is false and we did not call read(), but received \(self.unwrapInboundIn(data))")
+                }
             }
         }
 
@@ -1573,7 +1585,7 @@ public class ChannelTests: XCTestCase {
             .serverChannelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
             .childChannelOption(ChannelOptions.autoRead, value: false)
             .childChannelInitializer { ch in
-                ch.pipeline.add(handler: NoChannelReadVerificationHandler())
+                ch.pipeline.add(handler: VerifyNoReadBeforeEOFHandler())
             }
             .bind(host: "127.0.0.1", port: 0).wait()
 
@@ -1589,7 +1601,66 @@ public class ChannelTests: XCTestCase {
         try serverChannel.close().wait()
     }
 
-    func testEOFOnlyReceivedOnceReadRequested() throws {
+    func testCloseInEOFdChannelReadBehavesCorrectly() throws {
+        let group = MultiThreadedEventLoopGroup(numThreads: 1)
+        defer {
+            XCTAssertNoThrow(try group.syncShutdownGracefully())
+        }
+
+        class VerifyEOFReadOrderingAndCloseInChannelReadHandler: ChannelInboundHandler {
+            typealias InboundIn = ByteBuffer
+
+            private var seenEOF: Bool = false
+            private var numberOfChannelReads: Int = 0
+
+            public func userInboundEventTriggered(ctx: ChannelHandlerContext, event: Any) {
+                if case .some(ChannelEvent.inputClosed) = event as? ChannelEvent {
+                    self.seenEOF = true
+                }
+                ctx.fireUserInboundEventTriggered(event)
+            }
+
+            public func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
+                if self.seenEOF {
+                    XCTFail("Should not be called before seeing the EOF as autoRead is false and we did not call read(), but received \(self.unwrapInboundIn(data))")
+                }
+                self.numberOfChannelReads += 1
+                let buffer = self.unwrapInboundIn(data)
+                XCTAssertLessThanOrEqual(buffer.readableBytes, 8)
+                XCTAssertEqual(1, self.numberOfChannelReads)
+                ctx.close(mode: .all, promise: nil)
+            }
+        }
+
+        let serverChannel = try ServerBootstrap(group: group)
+            .serverChannelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+            .childChannelOption(ChannelOptions.autoRead, value: false)
+            .childChannelInitializer { ch in
+                ch.pipeline.add(handler: VerifyEOFReadOrderingAndCloseInChannelReadHandler())
+            }
+            .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 1)
+            .childChannelOption(ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 8))
+            .bind(host: "127.0.0.1", port: 0).wait()
+
+        let clientChannel = try ClientBootstrap(group: group)
+            .connect(to: serverChannel.localAddress!).wait()
+        var buffer = clientChannel.allocator.buffer(capacity: 8)
+        buffer.write(string: "01234567")
+        for _ in 0..<20 {
+            do {
+                try clientChannel.writeAndFlush(buffer).wait()
+            } catch {
+                break
+            }
+        }
+        try clientChannel.close().wait()
+
+        // Wait for 100 ms.
+        usleep(100 * 1000);
+        try serverChannel.close().wait()
+    }
+
+    func testEOFReceivedWithoutReadRequests() throws {
         let group = MultiThreadedEventLoopGroup(numThreads: 1)
         defer {
             XCTAssertNoThrow(try group.syncShutdownGracefully())
@@ -1600,25 +1671,16 @@ public class ChannelTests: XCTestCase {
             typealias OutboundIn = ByteBuffer
 
             private let promise: EventLoopPromise<Void>
-            private var readRequested = false
 
             init(_ promise: EventLoopPromise<Void>) {
                 self.promise = promise
             }
 
-            public func channelActive(ctx: ChannelHandlerContext) {
-                _ = ctx.eventLoop.scheduleTask(in: .milliseconds(1)) {
-                    self.read(ctx: ctx)
-                }
-            }
-
             public func read(ctx: ChannelHandlerContext) {
-                readRequested = true
-                ctx.read()
+                XCTFail("shouldn't read")
             }
 
             public func channelInactive(ctx: ChannelHandlerContext) {
-                XCTAssertTrue(readRequested, "Should only be called after a read was requested")
                 promise.succeed(result: ())
             }
         }

@@ -249,14 +249,15 @@ public class AcceptBackoffHandlerTest: XCTestCase {
     private func setupChannel(group: EventLoopGroup, readCountHandler: ReadCountHandler, backoffProvider: @escaping (IOError) -> TimeAmount? = AcceptBackoffHandler.defaultBackoffProvider, errors: [Int32]) throws -> ServerSocketChannel {
         let socket = try NonAcceptingServerSocket(errors: errors)
         let serverChannel = try ServerSocketChannel(serverSocket: socket, eventLoop: group.next() as! SelectableEventLoop, group: group)
-        XCTAssertNoThrow(try serverChannel.setOption(option: ChannelOptions.autoRead, value: false).wait())
-        XCTAssertNoThrow(try serverChannel.register().wait())
 
+        XCTAssertNoThrow(try serverChannel.setOption(option: ChannelOptions.autoRead, value: false).wait())
         XCTAssertNoThrow(try serverChannel.pipeline.add(handler: readCountHandler).then { _ in
             serverChannel.pipeline.add(name: self.acceptHandlerName, handler: AcceptBackoffHandler(backoffProvider: backoffProvider))
         }.wait())
 
-        XCTAssertNoThrow(try serverChannel.bind(to: SocketAddress.init(ipAddress: "127.0.0.1", port: 0)).wait())
+        XCTAssertNoThrow(try serverChannel.register().then {
+            serverChannel.bind(to: try! SocketAddress(ipAddress: "127.0.0.1", port: 0))
+        }.wait())
         return serverChannel
     }
 }
