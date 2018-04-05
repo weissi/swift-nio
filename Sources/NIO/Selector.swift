@@ -180,7 +180,7 @@ final class Selector<R: Registration> {
         }
     }
 
-    private func register_kqueue<S: Selectable>(selectable: S, interested: IOEvent, oldInterested: IOEvent?) throws {
+    private func register_kqueue<S: Selectable>(selectable: S, interested: SelectorEventSet, oldInterested: SelectorEventSet?) throws {
         // Allocated on the stack
         var events = (kevent(), kevent())
         try selectable.withUnsafeFileDescriptor { fd in
@@ -198,19 +198,13 @@ final class Selector<R: Registration> {
             events.1.udata = nil
         }
 
-        switch interested {
-        case .read:
+        events.0.flags = UInt16(EV_DELETE)
+        events.1.flags = UInt16(EV_DELETE)
+        if interested.contains(.read) {
             events.0.flags = UInt16(EV_ADD)
-            events.1.flags = UInt16(EV_DELETE)
-        case .write:
-            events.0.flags = UInt16(EV_DELETE)
+        }
+        if interested.contains(.write) {
             events.1.flags = UInt16(EV_ADD)
-        case .all:
-            events.0.flags = UInt16(EV_ADD)
-            events.1.flags = UInt16(EV_ADD)
-        case .none:
-            events.0.flags = UInt16(EV_DELETE)
-            events.1.flags = UInt16(EV_DELETE)
         }
 
         var offset: Int = 0
@@ -227,7 +221,7 @@ final class Selector<R: Registration> {
                     offset += 1
                     numEvents -= 1
                 }
-            case .none:
+            case .reset:
                 // Only discard the delete events
                 if events.0.flags == UInt16(EV_DELETE) {
                     offset += 1
@@ -236,7 +230,7 @@ final class Selector<R: Registration> {
                 if events.1.flags == UInt16(EV_DELETE) {
                     numEvents -= 1
                 }
-            case .all:
+            default:
                 // No need to adjust anything
                 break
             }
@@ -268,7 +262,7 @@ final class Selector<R: Registration> {
     ///     - selectable: The `Selectable` to register.
     ///     - interested: The `IOEvent`s in which we are interested and want to be notified about.
     ///     - makeRegistration: Creates the registration data for the given `IOEvent`.
-    func register<S: Selectable>(selectable: S, interested: IOEvent = .read, makeRegistration: (IOEvent) -> R) throws {
+    func register<S: Selectable>(selectable: S, interested: SelectorEventSet = .read, makeRegistration: (SelectorEventSet) -> R) throws {
         guard self.lifecycleState == .open else {
             throw IOError(errnoCode: EBADF, reason: "can't register on selector as it's \(self.lifecycleState).")
         }
@@ -293,7 +287,7 @@ final class Selector<R: Registration> {
     /// - parameters:
     ///     - selectable: The `Selectable` to re-register.
     ///     - interested: The `IOEvent`s in which we are interested and want to be notified about.
-    func reregister<S: Selectable>(selectable: S, interested: IOEvent) throws {
+    func reregister<S: Selectable>(selectable: S, interested: SelectorEventSet) throws {
         guard self.lifecycleState == .open else {
             throw IOError(errnoCode: EBADF, reason: "can't re-register on selector as it's \(self.lifecycleState).")
         }
@@ -333,7 +327,7 @@ final class Selector<R: Registration> {
                 var ev = Epoll.epoll_event()
                 _ = try Epoll.epoll_ctl(epfd: self.fd, op: Epoll.EPOLL_CTL_DEL, fd: fd, event: &ev)
             #else
-                try register_kqueue(selectable: selectable, interested: .none, oldInterested: reg.interested)
+                try register_kqueue(selectable: selectable, interested: .reset, oldInterested: reg.interested)
             #endif
         }
     }
@@ -478,14 +472,14 @@ extension Selector: CustomStringConvertible {
 /// An event that is triggered once the `Selector` was able to select something.
 struct SelectorEvent<R> {
     public let registration: R
-    public let io: IOEvent
+    public let io: SelectorEventSet
 
     /// Create new instance
     ///
     /// - parameters:
     ///     - io: The `IOEvent` that triggered this event.
     ///     - registration: The registration that belongs to the event.
-    init(io: IOEvent, registration: R) {
+    init(io: SelectorEventSet, registration: R) {
         self.io = io
         self.registration = registration
     }
@@ -497,13 +491,14 @@ struct SelectorEvent<R> {
     ///     - writable: `true` if writable
     ///     - registration: The registration that belongs to the event.
     init(readable: Bool, writable: Bool, registration: R) {
+        var io: SelectorEventSet = .reset
         if readable {
-            self.io = writable ? .all : .read
-        } else if writable {
-            self.io = .write
-        } else {
-            self.io = .none
+            io.formUnion(.read)
         }
+        if writable {
+            io.formUnion(.write)
+        }
+        self.io = io
         self.registration = registration
     }
 }
@@ -564,6 +559,7 @@ enum SelectorStrategy {
 }
 
 /// The IO for which we want to be notified.
+@available(*, deprecated, message: "IOEvent was made public by accident, is no longer removed internally and will be removed with SwiftNIO 2.0.0")
 public enum IOEvent {
     /// Something is ready to be read.
     case read
@@ -576,4 +572,20 @@ public enum IOEvent {
 
     /// Not interested in any event.
     case none
+}
+
+struct SelectorEventSet: OptionSet, Equatable {
+
+    typealias RawValue = UInt8
+
+    let rawValue: UInt8
+
+    static let reset = SelectorEventSet(rawValue: 0)
+    static let readEOF = SelectorEventSet(rawValue: 1 << 0)
+    static let read = SelectorEventSet(rawValue: 1 << 1)
+    static let write = SelectorEventSet(rawValue: 1 << 2)
+
+    init(rawValue: SelectorEventSet.RawValue) {
+        self.rawValue = rawValue
+    }
 }

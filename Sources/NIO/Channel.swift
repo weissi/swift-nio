@@ -148,7 +148,7 @@ internal protocol SelectableChannel: Channel {
     var selectable: SelectableType { get }
 
     /// The event(s) of interest.
-    var interestedEvent: IOEvent { get }
+    var interestedEvent: SelectorEventSet { get }
 
     /// Called when the `SelectableChannel` is ready to be written.
     func writable()
@@ -161,7 +161,7 @@ internal protocol SelectableChannel: Channel {
     /// - parameters:
     ///     - interested: The event(s) of interest.
     /// - returns: A suitable registration for the `IOEvent` of interest.
-    func registrationFor(interested: IOEvent) -> NIORegistration
+    func registrationFor(interested: SelectorEventSet) -> NIORegistration
 }
 
 /// Default implementations which will start on the head of the `ChannelPipeline`.

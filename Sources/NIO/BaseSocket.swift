@@ -15,7 +15,7 @@
 /// A Registration on a `Selector`, which is interested in an `IOEvent`.
 protocol Registration {
     /// The `IOEvent` in which the `Registration` is interested.
-    var interested: IOEvent { get set }
+    var interested: SelectorEventSet { get set }
 }
 
 protocol SockAddrProtocol {

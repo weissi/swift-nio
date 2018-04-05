@@ -223,12 +223,12 @@ extension EventLoop {
 /// `SelectorEvent` that is provided to the user when an event is ready to be consumed for a `Selectable`. As we need to have access to the `ServerSocketChannel`
 /// and `SocketChannel` (to dispatch the events) we create our own `Registration` that holds a reference to these.
 enum NIORegistration: Registration {
-    case serverSocketChannel(ServerSocketChannel, IOEvent)
-    case socketChannel(SocketChannel, IOEvent)
-    case datagramChannel(DatagramChannel, IOEvent)
+    case serverSocketChannel(ServerSocketChannel, SelectorEventSet)
+    case socketChannel(SocketChannel, SelectorEventSet)
+    case datagramChannel(DatagramChannel, SelectorEventSet)
 
     /// The `IOEvent` in which this `NIORegistration` is interested in.
-    var interested: IOEvent {
+    var interested: SelectorEventSet {
         set {
             switch self {
             case .serverSocketChannel(let c, _):
@@ -418,26 +418,21 @@ internal final class SelectableEventLoop: EventLoop {
     }
 
     /// Handle the given `IOEvent` for the `SelectableChannel`.
-    private func handleEvent<C: SelectableChannel>(_ ev: IOEvent, channel: C) {
+    private func handleEvent<C: SelectableChannel>(_ ev: SelectorEventSet, channel: C) {
         guard channel.selectable.isOpen else {
             return
         }
 
-        switch ev {
-        case .write:
-            channel.writable()
-        case .read:
-            channel.readable()
-        case .all:
+        if ev.contains(.write) {
             channel.writable()
 
             guard channel.selectable.isOpen else {
                 return
             }
+        }
+
+        if ev.contains(.read) {
             channel.readable()
-        case .none:
-            // spurious wakeup
-            break
         }
     }
 

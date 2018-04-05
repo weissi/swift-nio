@@ -27,7 +27,7 @@ class SelectorTest: XCTestCase {
 
     private func assertDeregisterWhileProcessingEvents(closeAfterDeregister: Bool) throws {
         struct TestRegistration: Registration {
-            var interested: IOEvent
+            var interested: SelectorEventSet
             let socket: Socket
         }
 

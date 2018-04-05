@@ -181,7 +181,7 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
     private let addressesCached: AtomicBox<Box<(local:SocketAddress?, remote:SocketAddress?)>> = AtomicBox(value: Box((local: nil, remote: nil)))
     private let bufferAllocatorCached: AtomicBox<Box<ByteBufferAllocator>>
 
-    internal var interestedEvent: IOEvent = .none
+    internal var interestedEvent: SelectorEventSet = .reset
 
     var readPending = false
     var pendingConnect: EventLoopPromise<Void>?
@@ -285,7 +285,7 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
     }
 
     /// Provides the registration for this selector. Must be implemented by subclasses.
-    func registrationFor(interested: IOEvent) -> NIORegistration {
+    func registrationFor(interested: SelectorEventSet) -> NIORegistration {
         fatalError("must override")
     }
 
@@ -540,26 +540,21 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
     private func registerForWritable() {
         assert(eventLoop.inEventLoop)
 
-        switch interestedEvent {
-        case .read:
-            safeReregister(interested: .all)
-        case .none:
-            safeReregister(interested: .write)
-        case .write, .all:
-            break
+        guard !self.interestedEvent.contains(.write) else {
+            // nothing to do if we were previously interested in write
+            return
         }
+        self.safeReregister(interested: self.interestedEvent.union(.write))
     }
 
     func unregisterForWritable() {
         assert(eventLoop.inEventLoop)
-        switch interestedEvent {
-        case .all:
-            safeReregister(interested: .read)
-        case .write:
-            safeReregister(interested: .none)
-        case .read, .none:
-            break
+
+        guard self.interestedEvent.contains(.write) else {
+            // nothing to do if we were not previously interested in write
+            return
         }
+        self.safeReregister(interested: self.interestedEvent.subtracting(.write))
     }
 
     public final func flush0() {
@@ -606,28 +601,22 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
         assert(eventLoop.inEventLoop)
         assert(self.lifecycleManager.isRegistered)
 
-        switch interestedEvent {
-        case .write:
-            safeReregister(interested: .all)
-        case .none:
-            safeReregister(interested: .read)
-        case .read, .all:
-            break
+        guard !self.interestedEvent.contains(.read) else {
+            return
         }
+
+        self.safeReregister(interested: self.interestedEvent.union(.read))
     }
 
     func unregisterForReadable() {
         assert(eventLoop.inEventLoop)
         assert(self.lifecycleManager.isRegistered)
 
-        switch interestedEvent {
-        case .read:
-            safeReregister(interested: .none)
-        case .all:
-            safeReregister(interested: .write)
-        case .write, .none:
-            break
+        guard self.interestedEvent.contains(.read) else {
+            return
         }
+
+        self.safeReregister(interested: self.interestedEvent.subtracting(.read))
     }
 
     public func close0(error: Error, mode: CloseMode, promise: EventLoopPromise<Void>?) {
@@ -643,7 +632,7 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
             return
         }
 
-        interestedEvent = .none
+        interestedEvent = .reset
         do {
             try selectableEventLoop.deregister(channel: self)
         } catch let err {
@@ -696,7 +685,7 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
         // Was not registered yet so do it now.
         do {
             // We always register with interested .none and will just trigger readIfNeeded0() later to re-register if needed.
-            try self.safeRegister(interested: .none)
+            try self.safeRegister(interested: .reset)
             self.lifecycleManager.register(promise: promise)()
         } catch {
             promise?.fail(error: error)
@@ -870,15 +859,15 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
     }
 
     private func isWritePending() -> Bool {
-        return interestedEvent == .write || interestedEvent == .all
+        return self.interestedEvent.contains(.write)
     }
 
-    private func safeReregister(interested: IOEvent) {
+    private final func safeReregister(interested: SelectorEventSet) {
         assert(eventLoop.inEventLoop)
         assert(self.lifecycleManager.isRegistered)
 
         guard self.isOpen else {
-            interestedEvent = .none
+            interestedEvent = .reset
             return
         }
         if interested == interestedEvent {
@@ -894,7 +883,7 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
         }
     }
 
-    private func safeRegister(interested: IOEvent) throws {
+    private func safeRegister(interested: SelectorEventSet) throws {
         assert(eventLoop.inEventLoop)
         assert(!self.lifecycleManager.isRegistered)
 

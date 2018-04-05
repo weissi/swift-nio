@@ -106,7 +106,7 @@ final class SocketChannel: BaseSocketChannel<Socket> {
         }
     }
 
-    override func registrationFor(interested: IOEvent) -> NIORegistration {
+    override func registrationFor(interested: SelectorEventSet) -> NIORegistration {
         return .socketChannel(self, interested)
     }
 
@@ -315,7 +315,7 @@ final class ServerSocketChannel: BaseSocketChannel<ServerSocket> {
         try super.init(socket: serverSocket, eventLoop: eventLoop, recvAllocator: AdaptiveRecvByteBufferAllocator())
     }
 
-    override func registrationFor(interested: IOEvent) -> NIORegistration {
+    override func registrationFor(interested: SelectorEventSet) -> NIORegistration {
         return .serverSocketChannel(self, interested)
     }
 
@@ -546,7 +546,7 @@ final class DatagramChannel: BaseSocketChannel<Socket> {
         }
     }
 
-    override func registrationFor(interested: IOEvent) -> NIORegistration {
+    override func registrationFor(interested: SelectorEventSet) -> NIORegistration {
         return .datagramChannel(self, interested)
     }
 
