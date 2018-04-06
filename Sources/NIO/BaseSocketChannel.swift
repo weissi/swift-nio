@@ -658,9 +658,12 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
 
         // Fail all pending writes and so ensure all pending promises are notified
         self.unsetCachedAddressesFromSocket()
-        self.cancelWritesOnClose(error: error)
 
-        self.lifecycleManager.close(promise: p)()
+        let callouts = self.lifecycleManager.close(promise: p)
+
+        // both the following call out so we need to have our state sorted before then
+        self.cancelWritesOnClose(error: error)
+        callouts()
 
         eventLoop.execute {
             // ensure this is executed in a delayed fashion as the users code may still traverse the pipeline
@@ -747,23 +750,24 @@ class BaseSocketChannel<T: BaseSocket>: SelectableChannel, ChannelCore {
     }
 
     final func readEOF() {
-        print("read EOF")
-        self.safeReregister(interested: self.interestedEvent.subtracting(.readEOF))
+        if self.lifecycleManager.isRegistered {
+            self.safeReregister(interested: self.interestedEvent.subtracting(.readEOF))
 
-        var didReceiveEOF = !self.lifecycleManager.isActive
-        while self.lifecycleManager.isActive {
-            var localDidReceiveEOF: Bool = false
-            self.readable0(didReceiveEOF: &localDidReceiveEOF)
-            didReceiveEOF = didReceiveEOF || localDidReceiveEOF
-            if didReceiveEOF {
-                break
+            while self.lifecycleManager.isActive {
+                var didReceiveEOF: Bool = false
+                self.readable0(didReceiveEOF: &didReceiveEOF)
+                if didReceiveEOF {
+                    break
+                }
             }
         }
-        assert(didReceiveEOF)
     }
 
+    // this _needs_ to synchronously cause the fd to be unregistered
     final func reset() {
-        fatalError("\(#function)")
+        self.readEOF()
+        self.close0(error: ChannelError.eof, mode: .all, promise: nil)
+        assert(!self.lifecycleManager.isRegistered)
     }
 
     public final func readable() {

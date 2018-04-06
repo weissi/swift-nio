@@ -442,6 +442,10 @@ internal final class SelectableEventLoop: EventLoop {
         if ev.contains(.readEOF) {
             channel.readEOF()
         }
+
+        if ev.contains(.reset) {
+            channel.reset()
+        }
     }
 
     private func currentSelectorStrategy(nextReadyTask: ScheduledTask?) -> SelectorStrategy {

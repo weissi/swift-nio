@@ -237,7 +237,7 @@ final class Selector<R: Registration> {
                 var index: Int = 0
                 for (event, filter) in [(KQueueEventFilterSet.read, EVFILT_READ), (.write, EVFILT_WRITE), (.except, EVFILT_EXCEPT)] {
                     if let flags = apply(event: event) {
-//                        print("fd \(fd), \(flags == EV_ADD ? "+" : "-")\(event.rawValue)")
+                        //print("fd \(fd), \(flags == EV_ADD ? "+" : "-")\(event.rawValue)")
                         ptr[index].ident = UInt(fd)
                         ptr[index].filter = Int16(filter)
                         ptr[index].flags = flags
@@ -403,15 +403,16 @@ final class Selector<R: Registration> {
                 // woken-up by the user, just ignore
                 continue
             case EVFILT_READ:
-                if Int32(ev.flags) & EV_EOF != 0 {
-                    selectorEvent.formUnion(.readEOF)
-                    precondition(ev.fflags == 0, "READ ev.fflags = \(ev.fflags)")
-                }
                 selectorEvent.formUnion(.read)
+                fallthrough
             case EVFILT_EXCEPT:
                 if Int32(ev.flags) & EV_EOF != 0 {
+                    print("EOF")
                     selectorEvent.formUnion(.readEOF)
-                    precondition(ev.fflags == 0, "EXCEPT ev.fflags = \(ev.fflags)")
+                }
+                if ev.fflags != 0 {
+                    selectorEvent.formUnion(.reset)
+                    print("RESET \(Int32(ev.filter) == EVFILT_READ ? "read": "except")")
                 }
             case EVFILT_WRITE:
                 selectorEvent.formUnion(.write)

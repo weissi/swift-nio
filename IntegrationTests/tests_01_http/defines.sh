@@ -22,6 +22,11 @@ function create_token() {
 }
 
 function start_server() {
+    local extra_args=''
+    if [[ "$1" == "--disable-half-closure" ]]; then
+        extra_args="$1"
+        shift
+    fi
     local token="$1"
     local type="--uds"
     local port="$tmp/port.sock"
@@ -41,7 +46,7 @@ function start_server() {
 
     mkdir "$tmp/htdocs"
     swift build
-    "$(swift build --show-bin-path)/NIOHTTP1Server" $maybe_nio_host "$port" "$tmp/htdocs" &
+    "$(swift build --show-bin-path)/NIOHTTP1Server" $extra_args $maybe_nio_host "$port" "$tmp/htdocs" &
     tmp_server_pid=$!
     if [[ -z "$type" ]]; then
         # TCP mode, need to wait until we found a port that we can curl
