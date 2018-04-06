@@ -227,7 +227,7 @@ enum NIORegistration: Registration {
     case socketChannel(SocketChannel, SelectorEventSet)
     case datagramChannel(DatagramChannel, SelectorEventSet)
 
-    /// The `IOEvent` in which this `NIORegistration` is interested in.
+    /// The `SelectorEventSet` in which this `NIORegistration` is interested in.
     var interested: SelectorEventSet {
         set {
             switch self {
@@ -417,7 +417,7 @@ internal final class SelectableEventLoop: EventLoop {
         }
     }
 
-    /// Handle the given `IOEvent` for the `SelectableChannel`.
+    /// Handle the given `SelectorEventSet` for the `SelectableChannel`.
     private func handleEvent<C: SelectableChannel>(_ ev: SelectorEventSet, channel: C) {
         guard channel.selectable.isOpen else {
             return

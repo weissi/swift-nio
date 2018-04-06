@@ -162,11 +162,11 @@ internal protocol SelectableChannel: Channel {
     /// Called when the `SelectableChannel` was reset (ie. is now unusable)
     func reset()
 
-    /// Creates a registration for the `interested` `IOEvent` suitable for this `Channel`.
+    /// Creates a registration for the `interested` `SelectorEventSet` suitable for this `Channel`.
     ///
     /// - parameters:
     ///     - interested: The event(s) of interest.
-    /// - returns: A suitable registration for the `IOEvent` of interest.
+    /// - returns: A suitable registration for the `SelectorEventSet` of interest.
     func registrationFor(interested: SelectorEventSet) -> NIORegistration
 }
 

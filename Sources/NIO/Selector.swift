@@ -51,7 +51,24 @@ private struct KQueueEventFilterSet: OptionSet, Equatable {
     static let read = KQueueEventFilterSet(rawValue: 1 << 2)
     static let write = KQueueEventFilterSet(rawValue: 1 << 3)
 
-    init(rawValue: SelectorEventSet.RawValue) {
+    init(rawValue: RawValue) {
+        self.rawValue = rawValue
+    }
+}
+
+private struct EPollFilterSet: OptionSet, Equatable {
+    typealias RawValue = UInt8
+
+    let rawValue: UInt8
+
+    static let _none = EPollFilterSet(rawValue: 0)
+    static let hangup = EPollFilterSet(rawValue: 1 << 0)
+    static let readHangup = EPollFilterSet(rawValue: 1 << 1)
+    static let input = EPollFilterSet(rawValue: 1 << 2)
+    static let output = EPollFilterSet(rawValue: 1 << 3)
+    static let error = EPollFilterSet(rawValue: 1 << 4)
+
+    init(rawValue: RawValue) {
         self.rawValue = rawValue
     }
 }
@@ -71,6 +88,23 @@ extension KQueueEventFilterSet {
         self = thing
     }
 }
+
+extension EPollFilterSet {
+    init(selectorEventSet: SelectorEventSet) {
+        var thing: EPollFilterSet = [.error, .hangup]
+        if selectorEventSet.contains(.read) {
+            thing.formUnion(.input)
+        }
+        if selectorEventSet.contains(.write) {
+            thing.formUnion(.output)
+        }
+        if selectorEventSet.contains(.readEOF) {
+            thing.formUnion(.readHangup)
+        }
+        self = thing
+    }
+}
+
 
 ///  A `Selector` allows a user to register different `Selectable` sources to an underlying OS selector, and for that selector to notify them once IO is ready for them to process.
 ///
@@ -127,7 +161,7 @@ final class Selector<R: Registration> {
         self.lifecycleState = .open
 
         var ev = Epoll.epoll_event()
-        ev.events = Selector.toEpollEvents(interested: .read)
+        ev.events = Selector.toEpollEvents(interested: [.read])
         ev.data.fd = eventfd
 
         _ = try Epoll.epoll_ctl(epfd: self.fd, op: Epoll.EPOLL_CTL_ADD, fd: eventfd, event: &ev)
@@ -170,22 +204,32 @@ final class Selector<R: Registration> {
 #endif
     }
 
+
 #if os(Linux)
-
-    private static func toEpollEvents(interested: IOEvent) -> UInt32 {
+    private static func toEpollEvents(interested: SelectorEventSet) -> UInt32 {
         // Also merge EPOLLRDHUP in so we can easily detect connection-reset
-        switch interested {
-        case .read:
-            return Epoll.EPOLLIN.rawValue | Epoll.EPOLLERR.rawValue | Epoll.EPOLLRDHUP.rawValue
-        case .write:
-            return Epoll.EPOLLOUT.rawValue | Epoll.EPOLLERR.rawValue | Epoll.EPOLLRDHUP.rawValue
-        case .all:
-            return Epoll.EPOLLIN.rawValue | Epoll.EPOLLOUT.rawValue | Epoll.EPOLLERR.rawValue | Epoll.EPOLLRDHUP.rawValue
-        case .none:
-            return Epoll.EPOLLERR.rawValue
-        }
-    }
 
+        var filter: UInt32 = 0
+        let epollFilters = EPollFilterSet(selectorEventSet: interested)
+        if epollFilters.contains(.error) {
+            filter |= Epoll.EPOLLERR.rawValue
+        }
+        if epollFilters.contains(.hangup) {
+            filter |= Epoll.EPOLLHUP.rawValue
+        }
+        if epollFilters.contains(.input) {
+            filter |= Epoll.EPOLLIN.rawValue
+        }
+        if epollFilters.contains(.output) {
+            filter |= Epoll.EPOLLOUT.rawValue
+        }
+        if epollFilters.contains(.readHangup) {
+            filter |= Epoll.EPOLLRDHUP.rawValue
+        }
+        assert(filter & Epoll.EPOLLHUP.rawValue != 0) // not maskable
+        assert(filter & Epoll.EPOLLERR.rawValue != 0) // always interested
+        return filter
+    }
 #else
     private func toKQueueTimeSpec(strategy: SelectorStrategy) -> timespec? {
         switch strategy {
@@ -256,8 +300,8 @@ final class Selector<R: Registration> {
     ///
     /// - parameters:
     ///     - selectable: The `Selectable` to register.
-    ///     - interested: The `IOEvent`s in which we are interested and want to be notified about.
-    ///     - makeRegistration: Creates the registration data for the given `IOEvent`.
+    ///     - interested: The `SelectorEventSet` in which we are interested and want to be notified about.
+    ///     - makeRegistration: Creates the registration data for the given `SelectorEventSet`.
     func register<S: Selectable>(selectable: S, interested: SelectorEventSet, makeRegistration: (SelectorEventSet) -> R) throws {
         assert(interested.contains(.reset))
         guard self.lifecycleState == .open else {
@@ -283,7 +327,7 @@ final class Selector<R: Registration> {
     ///
     /// - parameters:
     ///     - selectable: The `Selectable` to re-register.
-    ///     - interested: The `IOEvent`s in which we are interested and want to be notified about.
+    ///     - interested: The `SelectorEventSet` in which we are interested and want to be notified about.
     func reregister<S: Selectable>(selectable: S, interested: SelectorEventSet) throws {
         guard self.lifecycleState == .open else {
             throw IOError(errnoCode: EBADF, reason: "can't re-register on selector as it's \(self.lifecycleState).")
@@ -307,7 +351,7 @@ final class Selector<R: Registration> {
 
     /// Deregister `Selectable`, must be registered via `register` before.
     ///
-    /// After the `Selectable is deregistered no `IOEvent`s will be produced anymore for the `Selectable`.
+    /// After the `Selectable is deregistered no `SelectorEventSet` will be produced anymore for the `Selectable`.
     ///
     /// - parameters:
     ///     - selectable: The `Selectable` to deregister.
@@ -380,11 +424,22 @@ final class Selector<R: Registration> {
             default:
                 // If the registration is not in the Map anymore we deregistered it during the processing of whenReady(...). In this case just skip it.
                 if let registration = registrations[Int(ev.data.fd)] {
-                    try body(
-                        SelectorEvent(
-                            readable: (ev.events & Epoll.EPOLLIN.rawValue) != 0 || (ev.events & Epoll.EPOLLERR.rawValue) != 0 || (ev.events & Epoll.EPOLLRDHUP.rawValue) != 0,
-                            writable: (ev.events & Epoll.EPOLLOUT.rawValue) != 0 || (ev.events & Epoll.EPOLLERR.rawValue) != 0 || (ev.events & Epoll.EPOLLRDHUP.rawValue) != 0,
-                            registration: registration))
+                    var selectorEvent: SelectorEvent = ._none
+                    if ev.events & Epoll.EPOLLIN.rawValue != 0 {
+                        selectorEvent.formUnion(.read)
+                    }
+                    if ev.events & Epoll.EPOLLOUT.rawValue != 0 {
+                        selectorEvent.formUnion(.write)
+                    }
+                    if ev.events & Epoll.EPOLLRDHUP.rawValue != 0 {
+                        selectorEvent.formUnion(.readEOF)
+                    }
+                    if ev.events & Epoll.EPOLLHUP.rawValue != 0 || ev.events & Epoll.EPOLLERR.rawValue != 0 {
+                        selectorEvent.formUnion(.reset)
+                    }
+
+                    assert(selectorEvent.isSubset(of: registration.interested))
+                    try body((SelectorEvent(io: selectorEvent, registration: registration)))
                 }
             }
         }
@@ -490,7 +545,7 @@ struct SelectorEvent<R> {
     /// Create new instance
     ///
     /// - parameters:
-    ///     - io: The `IOEvent` that triggered this event.
+    ///     - io: The `SelectorEventSet` that triggered this event.
     ///     - registration: The registration that belongs to the event.
     init(io: SelectorEventSet, registration: R) {
         self.io = io
