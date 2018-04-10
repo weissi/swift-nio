@@ -221,12 +221,61 @@ private final class HTTPHandler: ChannelInboundHandler {
         }
     }
 
+    func handleDelayedInputClose(ctx: ChannelHandlerContext, request: HTTPServerRequestPart, howLong: String) {
+        let howLongInterval: TimeAmount = Int(howLong).map { .milliseconds($0) } ?? .seconds(0)
+
+        switch request {
+        case .head(let request):
+            self.keepAlive = request.isKeepAlive
+            self.state.requestReceived()
+            var buf = ctx.channel.allocator.buffer(capacity: 128)
+            buf.write(staticString: "shutting down the input right after this message is flushed.\r\n")
+            self.state.requestComplete()
+            ctx.writeAndFlush(self.wrapOutboundOut(.head(.init(version: request.version, status: .ok)))).whenComplete {
+                _ = ctx.eventLoop.scheduleTask(in: howLongInterval) {
+                    ctx.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(buf)))).whenComplete {
+                        ctx.close(mode: .input).whenComplete {
+                            _ = ctx.eventLoop.scheduleTask(in: howLongInterval) {
+                                buf.clear()
+                                buf.write(staticString: "this is after this server's input was closed")
+
+                                ctx.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(buf)))).whenSuccess {
+                                    let fh = FileHandle(descriptor: open("/dev/zero", O_RDONLY))
+                                    self.fileIO.readChunked(fileHandle: fh, byteCount: 10 * 1024 * 1024 * 1024, chunkSize: 1024 * 1024, allocator: ctx.channel.allocator, eventLoop: ctx.eventLoop) { buf in
+                                        return ctx.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(buf))))
+                                    }.whenComplete {
+                                        try! fh.close()
+                                    }
+                                    _ = ctx.eventLoop.scheduleTask(in: .seconds(15)) {
+                                        print("OK")
+                                        self.completeResponse(ctx, trailers: HTTPHeaders(), promise: nil)
+                                    }
+                                }
+
+                            }
+                        }
+                    }
+                }
+            }
+        case .body(buffer: _):
+            ()
+        case .end:
+            ()
+        }
+    }
+
     func dynamicHandler(request reqHead: HTTPRequestHead) -> ((ChannelHandlerContext, HTTPServerRequestPart) -> Void)? {
         if let howLong = reqHead.uri.chopPrefix("/dynamic/write-delay/") {
             return { ctx, req in
                 self.handleJustWrite(ctx: ctx,
                                      request: req, string: "Hello World\r\n",
                                      delay: Int(howLong).map { .milliseconds($0) } ?? .seconds(0))
+            }
+        }
+
+        if let howLong = reqHead.uri.chopPrefix("/dynamic/input-close-delay/") {
+            return { ctx, req in
+                self.handleDelayedInputClose(ctx: ctx, request: req, howLong: howLong)
             }
         }
 
