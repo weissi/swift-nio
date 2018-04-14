@@ -19,22 +19,57 @@ let headerSeparator: StaticString = ": "
 
 /// A representation of the request line and header fields of a HTTP request.
 public struct HTTPRequestHead: Equatable {
+    private class _Storage {
+        let method: HTTPMethod
+        let rawURI: URI
+        let version: HTTPVersion
+        var headers: HTTPHeaders
+        
+        init(method: HTTPMethod, rawURI: URI, version: HTTPVersion, headers: HTTPHeaders) {
+            self.method = method
+            self.rawURI = rawURI
+            self.version = version
+            self.headers = headers
+        }
+        
+        func copy() -> _Storage {
+            return _Storage(method: self.method, rawURI: self.rawURI, version: self.version, headers: self.headers)
+        }
+    }
+    private var _storage: _Storage
+    
     /// The HTTP method for this request.
-    public let method: HTTPMethod
+    public var method: HTTPMethod {
+        return self._storage.method
+    }
 
     // Internal representation of the URI.
-    private let rawURI: URI
+    private var rawURI: URI {
+        return self._storage.rawURI
+    }
 
     /// The URI used on this request.
     public var uri: String {
-        return String(uri: rawURI)
+        return String(uri: self.rawURI)
     }
 
     /// The version for this HTTP request.
-    public let version: HTTPVersion
+    public var version: HTTPVersion {
+        return self._storage.version
+    }
 
     /// The header fields for this HTTP request.
-    public var headers: HTTPHeaders
+    public var headers: HTTPHeaders {
+        get {
+            return self._storage.headers
+        }
+        set {
+            if !isKnownUniquelyReferenced(&self._storage) {
+                self._storage = self._storage.copy()
+            }
+            self._storage.headers = newValue
+        }
+    }
 
     /// Create a `HTTPRequestHead`
     ///
@@ -52,10 +87,7 @@ public struct HTTPRequestHead: Equatable {
     /// - Parameter rawURI: The URI used on this request.
     /// - Parameter headers: The headers for this HTTP request.
     init(version: HTTPVersion, method: HTTPMethod, rawURI: URI, headers: HTTPHeaders) {
-        self.version = version
-        self.method = method
-        self.rawURI = rawURI
-        self.headers = headers
+        self._storage = _Storage(method: method, rawURI: rawURI, version: version, headers: headers)
     }
 
     public static func ==(lhs: HTTPRequestHead, rhs: HTTPRequestHead) -> Bool {
@@ -90,6 +122,59 @@ public enum HTTPPart<HeadT: Equatable, BodyT: Equatable> {
     case head(HeadT)
     case body(BodyT)
     case end(HTTPHeaders?)
+}
+
+extension HTTPPart: _NIOAnySplittable {
+    @_versioned
+    enum _Tag: Int {
+        case head
+        case bodyByteBuffer
+        case bodyFileRegion
+        case bodyDirect
+        case end
+    }
+    
+    @inline(__always)
+    public func _split() -> (Int, Any) {
+        switch self {
+        case .head(let value):
+            assert(MemoryLayout.size(ofValue: value) <= 24)
+            return (_Tag.head.rawValue, value)
+        case .body(let value):
+            if BodyT.self == IOData.self {
+                switch value as! IOData {
+                case .byteBuffer(let buffer):
+                    assert(MemoryLayout.size(ofValue: buffer) <= 24)
+                    return (_Tag.bodyByteBuffer.rawValue, buffer)
+                case .fileRegion(let region):
+                    assert(MemoryLayout.size(ofValue: region) <= 24)
+                    return (_Tag.bodyFileRegion.rawValue, region)
+                }
+            } else {
+                assert(MemoryLayout.size(ofValue: value) <= 24)
+                return (_Tag.bodyDirect.rawValue, value)
+            }
+        case .end(let value):
+            assert(MemoryLayout.size(ofValue: value) <= 24)
+            return (_Tag.end.rawValue, value)
+        }
+    }
+    
+    @inline(__always)
+    public static func _combine(_ tav: (Int, Any)) -> HTTPPart<HeadT, BodyT> {
+        switch _Tag(rawValue: tav.0)! {
+        case .head:
+            return .head(tav.1 as! HeadT)
+        case .bodyDirect:
+            return .body(tav.1 as! BodyT)
+        case .bodyByteBuffer:
+            return .body(IOData.byteBuffer(tav.1 as! ByteBuffer) as! BodyT)
+        case .bodyFileRegion:
+            return .body(IOData.fileRegion(tav.1 as! FileRegion) as! BodyT)
+        case .end:
+            return .end(tav.1 as? HTTPHeaders)
+        }
+    }
 }
 
 extension HTTPPart: Equatable {
@@ -137,14 +222,43 @@ extension HTTPRequestHead {
 
 /// A representation of the status line and header fields of a HTTP response.
 public struct HTTPResponseHead: Equatable {
+    private class _Storage {
+        let status: HTTPResponseStatus
+        let version: HTTPVersion
+        var headers: HTTPHeaders
+        init(status: HTTPResponseStatus, version: HTTPVersion, headers: HTTPHeaders) {
+            self.status = status
+            self.version = version
+            self.headers = headers
+        }
+        func copy() -> _Storage {
+            return .init(status: self.status, version: self.version, headers: self.headers)
+        }
+    }
+    private var _storage: _Storage
+    
     /// The HTTP response status.
-    public let status: HTTPResponseStatus
+    public var status: HTTPResponseStatus {
+        return self._storage.status
+    }
 
     /// The HTTP version that corresponds to this response.
-    public let version: HTTPVersion
+    public var version: HTTPVersion {
+        return self._storage.version
+    }
 
     /// The HTTP headers on this response.
-    public var headers: HTTPHeaders
+    public var headers: HTTPHeaders {
+        get {
+            return self._storage.headers
+        }
+        set {
+            if !isKnownUniquelyReferenced(&self._storage) {
+                self._storage = self._storage.copy()
+            }
+            self._storage.headers = newValue
+        }
+    }
 
     /// Create a `HTTPResponseHead`
     ///
@@ -152,9 +266,7 @@ public struct HTTPResponseHead: Equatable {
     /// - Parameter status: The status for this HTTP response.
     /// - Parameter headers: The headers for this HTTP response.
     public init(version: HTTPVersion, status: HTTPResponseStatus, headers: HTTPHeaders = HTTPHeaders()) {
-        self.version = version
-        self.status = status
-        self.headers = headers
+        self._storage = .init(status: status, version: version, headers: headers)
     }
 
     public static func ==(lhs: HTTPResponseHead, rhs: HTTPResponseHead) -> Bool {
@@ -214,11 +326,60 @@ private extension UInt8 {
 /// or split representation, such that header fields that are able to be repeated
 /// can be represented appropriately.
 public struct HTTPHeaders: CustomStringConvertible {
+    
+    private class _Storage {
+        var buffer: ByteBuffer
+        var headers: [HTTPHeader]
+        var continuous: Bool = true
+        
+        init(buffer: ByteBuffer, headers: [HTTPHeader], continuous: Bool) {
+            self.buffer = buffer
+            self.headers = headers
+            self.continuous = continuous
+        }
+        
+        func copy() -> _Storage {
+            return _Storage(buffer: self.buffer, headers: self.headers, continuous: self.continuous)
+        }
+    }
+    private var _storage: _Storage
 
     // Because we use CoW implementations HTTPHeaders is also CoW
-    fileprivate var buffer: ByteBuffer
-    fileprivate var headers: [HTTPHeader]
-    fileprivate var continuous: Bool = true
+    fileprivate var buffer: ByteBuffer {
+        get {
+            return self._storage.buffer
+        }
+        set {
+            if !isKnownUniquelyReferenced(&self._storage) {
+                self._storage = self._storage.copy()
+            }
+            self._storage.buffer = newValue
+        }
+    }
+    
+    fileprivate var headers: [HTTPHeader] {
+        get {
+            return self._storage.headers
+        }
+        set {
+            if !isKnownUniquelyReferenced(&self._storage) {
+                self._storage = self._storage.copy()
+            }
+            self._storage.headers = newValue
+        }
+    }
+    
+    fileprivate var continuous: Bool {
+        get {
+            return self._storage.continuous
+        }
+        set {
+            if !isKnownUniquelyReferenced(&self._storage) {
+                self._storage = self._storage.copy()
+            }
+            self._storage.continuous = newValue
+        }
+    }
 
     /// Returns the `String` for the given `HTTPHeaderIndex`.
     ///
@@ -246,8 +407,7 @@ public struct HTTPHeaders: CustomStringConvertible {
 
     /// Constructor used by our decoder to construct headers without the need of converting bytes to string.
     init(buffer: ByteBuffer, headers: [HTTPHeader]) {
-        self.buffer = buffer
-        self.headers = headers
+        self._storage = _Storage(buffer: buffer, headers: headers, continuous: true)
     }
 
     /// Construct a `HTTPHeaders` structure.

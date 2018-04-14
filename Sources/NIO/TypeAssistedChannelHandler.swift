@@ -41,18 +41,22 @@ public protocol ChannelInboundHandler: _ChannelInboundHandler, _EmittingChannelH
     associatedtype InboundOut = Never
 
     /// Unwrap the provided `NIOAny` that was passed to `channelRead`.
+    @_inlineable
     func unwrapInboundIn(_ value: NIOAny) -> InboundIn
 
     /// Wrap the provided `InboundOut` that will be passed to the next `ChannelInboundHandler` by calling `ChannelHandlerContext.fireChannelRead`.
+    @_inlineable
     func wrapInboundOut(_ value: InboundOut) -> NIOAny
 }
 
 /// Default implementations for `ChannelInboundHandler`.
 extension ChannelInboundHandler {
+    @inline(__always)
     public func unwrapInboundIn(_ value: NIOAny) -> InboundIn {
         return value.forceAs()
     }
 
+    @inline(__always)
     public func wrapInboundOut(_ value: InboundOut) -> NIOAny {
         return NIOAny(value)
     }
