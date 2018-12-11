@@ -18,8 +18,19 @@ import NIOHTTP1
 
 class HTTPServerProtocolErrorHandlerTest: XCTestCase {
     func testHandlesBasicErrors() throws {
+        class CloseOnHTTPErrorHandler: ChannelInboundHandler {
+            typealias InboundIn = Never
+
+            func errorCaught(context: ChannelHandlerContext, error: Error) {
+                if let error = error as? HTTPParserError {
+                    context.fireErrorCaught(error)
+                    context.close(promise: nil)
+                }
+            }
+        }
         let channel = EmbeddedChannel()
         XCTAssertNoThrow(try channel.pipeline.configureHTTPServerPipeline(withErrorHandling: true).wait())
+        XCTAssertNoThrow(try channel.pipeline.addHandler(CloseOnHTTPErrorHandler()).wait())
 
         var buffer = channel.allocator.buffer(capacity: 1024)
         buffer.writeStaticString("GET / HTTP/1.1\r\nContent-Length: -4\r\n\r\n")
@@ -34,15 +45,20 @@ class HTTPServerProtocolErrorHandlerTest: XCTestCase {
         XCTAssertNoThrow(try channel.closeFuture.wait())
 
         // We expect exactly one ByteBuffer in the output.
-        guard var written = channel.readOutbound(as: ByteBuffer.self) else {
+        guard let written = channel.readOutbound(as: IOData.self) else {
             XCTFail("No writes")
+            return
+        }
+
+        guard case .byteBuffer(var writtenBuffer) = written else {
+            XCTFail("wrong type: \(written)")
             return
         }
 
         XCTAssertNil(channel.readOutbound())
 
         // Check the response.
-        assertResponseIs(response: written.readString(length: written.readableBytes)!,
+        assertResponseIs(response: writtenBuffer.readString(length: written.readableBytes)!,
                          expectedResponseLine: "HTTP/1.1 400 Bad Request",
                          expectedResponseHeaders: ["Connection: close", "Content-Length: 0"])
     }

@@ -22,10 +22,12 @@ extension ChannelPipeline {
         try self.assertDoesNotContain(handlerType: HTTPServerUpgradeHandler.self)
     }
 
-    func assertDoesNotContain<Handler: ChannelHandler>(handlerType: Handler.Type) throws {
+    func assertDoesNotContain<Handler: ChannelHandler>(handlerType: Handler.Type,
+                                                       file: StaticString = #file,
+                                                       line: UInt = #line) throws {
         do {
-            _ = try self.context(handlerType: handlerType).wait()
-            XCTFail("Found handler")
+            let context = try self.context(handlerType: handlerType).wait()
+            XCTFail("Found handler: \(context.handler)", file: file, line: line)
         } catch ChannelPipelineError.notFound {
             // Nothing to see here
         }
@@ -776,7 +778,7 @@ class HTTPUpgradeTestCase: XCTestCase {
         }
 
         // First, validate the pipeline is right.
-        XCTAssertNoThrow(try connectedServer.pipeline.assertContains(handlerType: HTTPRequestDecoder.self))
+        XCTAssertNoThrow(try connectedServer.pipeline.assertContains(handlerType: ByteToMessageHandler<HTTPRequestDecoder>.self))
         XCTAssertNoThrow(try connectedServer.pipeline.assertContains(handlerType: HTTPResponseEncoder.self))
         XCTAssertNoThrow(try connectedServer.pipeline.assertContains(handlerType: HTTPServerPipelineHandler.self))
 
@@ -788,7 +790,7 @@ class HTTPUpgradeTestCase: XCTestCase {
         XCTAssertNoThrow(try connectedServer.pipeline.waitForUpgraderToBeRemoved())
 
         // At this time we should validate that none of the HTTP handlers in the pipeline exist.
-        XCTAssertNoThrow(try connectedServer.pipeline.assertDoesNotContain(handlerType: HTTPRequestDecoder.self))
+        XCTAssertNoThrow(try connectedServer.pipeline.assertDoesNotContain(handlerType: ByteToMessageHandler<HTTPRequestDecoder>.self))
         XCTAssertNoThrow(try connectedServer.pipeline.assertDoesNotContain(handlerType: HTTPResponseEncoder.self))
         XCTAssertNoThrow(try connectedServer.pipeline.assertDoesNotContain(handlerType: HTTPServerPipelineHandler.self))
     }
@@ -831,9 +833,9 @@ class HTTPUpgradeTestCase: XCTestCase {
             }
             
             func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-                let buf = self.unwrapInboundIn(data)
+                var buf = self.unwrapInboundIn(data)
                 XCTAssertEqual(1, buf.readableBytes)
-                let stringRead = buf.getString(at: 0, length: buf.readableBytes)
+                let stringRead = buf.readString(length: buf.readableBytes)
                 switch self.state {
                 case .added:
                     XCTAssertEqual("A", stringRead)
