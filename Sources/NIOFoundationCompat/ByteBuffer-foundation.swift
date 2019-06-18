@@ -61,14 +61,14 @@ extension ByteBuffer {
     ///     - index: The starting index of the bytes of interest into the `ByteBuffer`
     ///     - length: The number of bytes of interest
     /// - returns: A `Data` value containing the bytes of interest or `nil` if the selected bytes are not readable.
-    public func getData(at index0: Int, length: Int) -> Data? {
-        let index = index0 - self.readerIndex
-        guard index >= 0 && length >= 0 && index <= self.readableBytes - length else {
+    public func getData(at index: Int, length: Int) -> Data? {
+        let indexFromReader = index - self.readerIndex
+        guard indexFromReader >= 0 && length >= 0 && indexFromReader <= self.readableBytes - length else {
             return nil
         }
         return self.withUnsafeReadableBytesWithStorageManagement { ptr, storageRef in
             _ = storageRef.retain()
-            return Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: ptr.baseAddress!.advanced(by: index)),
+            return Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: ptr.baseAddress!.advanced(by: indexFromReader)),
                         count: Int(length),
                         deallocator: .custom { _, _ in storageRef.release() })
         }
