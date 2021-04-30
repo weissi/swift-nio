@@ -126,10 +126,10 @@ extension ByteBuffer {
                 return Data(bytes: UnsafeMutableRawPointer(mutating: ptr.baseAddress!.advanced(by: index)),
                             count: Int(length))
             } else {
-                _ = storageRef.retain()
+                let storage = storageRef.takeUnretainedValue()
                 return Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: ptr.baseAddress!.advanced(by: index)),
                             count: Int(length),
-                            deallocator: .custom { _, _ in storageRef.release() })
+                            deallocator: .custom { _, _ in withExtendedLifetime(storage) {} })
             }
         }
     }

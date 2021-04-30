@@ -14,6 +14,7 @@
 
 import Dispatch
 import NIO
+import NIOFoundationCompat
 
 func run(identifier: String) {
     measure(identifier: identifier) {
@@ -25,12 +26,12 @@ func run(identifier: String) {
         @inline(never)
         func doWrites(buffer: inout ByteBuffer) {
             /* these ones are zero allocations */
-            // buffer.writeBytes(foundationData) // see SR-7542
             buffer.writeBytes([0x41])
             buffer.writeBytes("A".utf8)
             buffer.writeString("A")
             buffer.writeStaticString("A")
             buffer.writeInteger(0x41, as: UInt8.self)
+            buffer.writeRepeatingByte(0x41, count: 16)
 
             /* those down here should be one allocation each (on Linux) */
             buffer.writeBytes(dispatchData) // see https://bugs.swift.org/browse/SR-9597
@@ -38,24 +39,29 @@ func run(identifier: String) {
         @inline(never)
         func doReads(buffer: inout ByteBuffer) {
             /* these ones are zero allocations */
-            let val = buffer.readInteger(as: UInt8.self)
+            var val = buffer.readInteger(as: UInt8.self)
             precondition(0x41 == val, "\(val!)")
+            val = buffer.readInteger(as: UInt16.self)
+            precondition(0x4141 == val, "\(val!)")
             var slice = buffer.readSlice(length: 1)
             let sliceVal = slice!.readInteger(as: UInt8.self)
             precondition(0x41 == sliceVal, "\(sliceVal!)")
             buffer.withUnsafeReadableBytes { ptr in
                 precondition(ptr[0] == 0x41)
             }
+            let str = buffer.readString(length: 1)
+            precondition("A" == str, "\(str!)")
 
             /* those down here should be one allocation each */
             let arr = buffer.readBytes(length: 1)
             precondition([0x41] == arr!, "\(arr!)")
-            let str = buffer.readString(length: 1)
-            precondition("A" == str, "\(str!)")
+            let data = buffer.readData(length: 16, byteTransferStrategy: .noCopy)
+            precondition(0x41 == data?.first && 0x41 == data?.last)
         }
         for _ in 0..<1000  {
             doWrites(buffer: &buffer)
             doReads(buffer: &buffer)
+            precondition(buffer.readableBytes == 0)
         }
         return buffer.readableBytes
     }
