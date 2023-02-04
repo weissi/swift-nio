@@ -43,7 +43,7 @@ internal func openSSLBIOWriteFunc(bio: UnsafeMutableRawPointer?, buf: UnsafePoin
 
     let swiftBIO: ByteBufferBIO = Unmanaged.fromOpaque(userPtr).takeUnretainedValue()
     let bufferPtr = UnsafeRawBufferPointer(start: concreteBuf, count: Int(len))
-    return swiftBIO.sslWrite(buffer: bufferPtr)
+    return swiftBIO.sslwriteBuffer(bufferPtr)
 }
 
 /// The OpenSSL entry point to read from the `ByteBufferBIO`. This thunk unwraps the user data
@@ -306,14 +306,14 @@ final class ByteBufferBIO {
     /// - parameters:
     ///     - buffer: The buffer for NIO to copy bytes from.
     /// - returns: The number of bytes we have copied.
-    fileprivate func sslWrite(buffer: UnsafeRawBufferPointer) -> CInt {
+    fileprivate func sslwriteBuffer(_ buffer: UnsafeRawBufferPointer) -> CInt {
         if self.mustClearOutboundBuffer {
             // We just flushed, and this is a new write. Let's clear the buffer now.
             self.outboundBuffer.clear()
             assert(!self.mustClearOutboundBuffer)
         }
 
-        let writtenBytes = self.outboundBuffer.write(bytes: buffer)
+        let writtenBytes = self.outboundBuffer.writeBytes(buffer)
         return CInt(writtenBytes)
     }
 }

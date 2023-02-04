@@ -231,7 +231,7 @@ internal final class SSLConnection {
         // will try to use that as the number of bytes written and blow up. If we could prevent it doing that (which
         // we can with reading) that would be grand, but we can't, so instead we need to use a temp variable. Not ideal.
         var bytesRead: Int32 = 0
-        let rc = outputBuffer.writeWithUnsafeMutableBytes { (pointer) -> Int in
+        let rc = outputBuffer.writeWithUnsafeMutableBytes(minimumWritableBytes: 16) { (pointer) -> Int in
             bytesRead = SSL_read(.make(optional: self.ssl), pointer.baseAddress, Int32(pointer.count))
             return bytesRead >= 0 ? Int(bytesRead) : 0
         }

@@ -16,13 +16,13 @@
 import PackageDescription
 
 let package = Package(
-    name: "swift-nio-ssl",
+    name: "openssl-for-swiftnio2",
     products: [
         .library(name: "NIOOpenSSL", targets: ["NIOOpenSSL"]),
         .executable(name: "NIOTLSServer", targets: ["NIOTLSServer"]),
     ],
     dependencies: [
-    .package(url: "https://github.com/apple/swift-nio.git", from: "1.12.0"),
+    .package(url: "https://github.com/apple/swift-nio.git", from: "2.46.0"),
     .package(url: "https://github.com/apple/swift-nio-ssl-support.git", from: "1.0.0"),
     ],
     targets: [

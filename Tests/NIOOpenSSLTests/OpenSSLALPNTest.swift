@@ -46,7 +46,7 @@ class OpenSSLALPNTest: XCTestCase {
             XCTAssertNoThrow(try group.syncShutdownGracefully())
         }
 
-        let completionPromise: EventLoopPromise<ByteBuffer> = group.next().newPromise()
+        let completionPromise: EventLoopPromise<ByteBuffer> = group.next().makePromise()
         let serverHandler = EventRecorderHandler<TLSUserEvent>()
 
         let serverChannel = try serverTLSChannel(context: serverContext,
@@ -66,7 +66,7 @@ class OpenSSLALPNTest: XCTestCase {
         }
 
         var originalBuffer = clientChannel.allocator.buffer(capacity: 5)
-        originalBuffer.write(string: "Hello")
+        originalBuffer.writeString("Hello")
         try clientChannel.writeAndFlush(originalBuffer).wait()
         _ = try completionPromise.futureResult.wait()
 
@@ -122,15 +122,15 @@ class OpenSSLALPNTest: XCTestCase {
     }
 
     func testBasicALPNNegotiation() throws {
-        let ctx: NIOOpenSSL.SSLContext
+        let context: NIOOpenSSL.SSLContext
         do {
-            ctx = try configuredSSLContextWithAlpnProtocols(protocols: ["h2", "http/1.1"])
+            context = try configuredSSLContextWithAlpnProtocols(protocols: ["h2", "http/1.1"])
         } catch OpenSSLError.failedToSetALPN {
             XCTAssertTrue(CNIOOpenSSL_OpenSSL_version_num() < 0x010002000)
             return
         }
 
-        try assertNegotiatedProtocol(protocol: "h2", serverContext: ctx, clientContext: ctx)
+        try assertNegotiatedProtocol(protocol: "h2", serverContext: context, clientContext: context)
     }
 
     func testBasicALPNNegotiationPrefersServerPriority() throws {

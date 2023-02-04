@@ -33,29 +33,29 @@ class ClientSNITests: XCTestCase {
         let config = TLSConfiguration.forServer(certificateChain: [.certificate(OpenSSLIntegrationTest.cert)],
                                                 privateKey: .privateKey(OpenSSLIntegrationTest.key),
                                                 trustRoots: .certificates([OpenSSLIntegrationTest.cert]))
-        let ctx = try SSLContext(configuration: config)
-        return ctx
+        let context = try SSLContext(configuration: config)
+        return context
     }
 
-    private func assertSniResult(sniField: String?, expectedResult: SniResult) throws {
-        let ctx = try configuredSSLContext()
+    private func assertSNIResult(sniField: String?, expectedResult: SNIResult) throws {
+        let context = try configuredSSLContext()
 
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer {
             try? group.syncShutdownGracefully()
         }
 
-        let sniPromise: EventLoopPromise<SniResult> = group.next().newPromise()
-        let sniHandler = SniHandler {
-            sniPromise.succeed(result: $0)
-            return group.next().newSucceededFuture(result: ())
-        }
-        let serverChannel = try serverTLSChannel(context: ctx, preHandlers: [sniHandler], postHandlers: [], group: group)
+        let sniPromise: EventLoopPromise<SNIResult> = group.next().makePromise()
+        let sniHandler = ByteToMessageHandler(SNIHandler { sniResult in
+            sniPromise.succeed(sniResult)
+            return group.next().makeSucceededFuture(())
+        })
+        let serverChannel: Channel = try serverTLSChannel(context: context, preHandlers: [sniHandler], postHandlers: [], group: group)
         defer {
             _ = try? serverChannel.close().wait()
         }
 
-        let clientChannel = try clientTLSChannel(context: ctx,
+        let clientChannel = try clientTLSChannel(context: context,
                                                  preHandlers: [],
                                                  postHandlers: [],
                                                  group: group,
@@ -65,23 +65,23 @@ class ClientSNITests: XCTestCase {
             _ = try? clientChannel.close().wait()
         }
 
-        let sniResult = try sniPromise.futureResult.wait()
-        XCTAssertEqual(sniResult, expectedResult)
+        let SNIResult = try sniPromise.futureResult.wait()
+        XCTAssertEqual(SNIResult, expectedResult)
     }
 
     func testSNIIsTransmitted() throws {
-        try assertSniResult(sniField: "httpbin.org", expectedResult: .hostname("httpbin.org"))
+        try assertSNIResult(sniField: "httpbin.org", expectedResult: .hostname("httpbin.org"))
     }
 
     func testNoSNILeadsToNoExtension() throws {
-        try assertSniResult(sniField: nil, expectedResult: .fallback)
+        try assertSNIResult(sniField: nil, expectedResult: .fallback)
     }
 
     func testSNIIsRejectedForIPv4Addresses() throws {
-        let ctx = try configuredSSLContext()
+        let context = try configuredSSLContext()
 
         do {
-            _ = try OpenSSLClientHandler(context: ctx, serverHostname: "192.168.0.1")
+            _ = try OpenSSLClientHandler(context: context, serverHostname: "192.168.0.1")
             XCTFail("Created client handler with invalid SNI name")
         } catch OpenSSLError.invalidSNIName {
             // All fine.
@@ -89,10 +89,10 @@ class ClientSNITests: XCTestCase {
     }
 
     func testSNIIsRejectedForIPv6Addresses() throws {
-        let ctx = try configuredSSLContext()
+        let context = try configuredSSLContext()
 
         do {
-            _ = try OpenSSLClientHandler(context: ctx, serverHostname: "fe80::200:f8ff:fe21:67cf")
+            _ = try OpenSSLClientHandler(context: context, serverHostname: "fe80::200:f8ff:fe21:67cf")
             XCTFail("Created client handler with invalid SNI name")
         } catch OpenSSLError.invalidSNIName {
             // All fine.

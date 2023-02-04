@@ -26,7 +26,7 @@ class ErrorCatcher<T: Error>: ChannelInboundHandler {
         errors = []
     }
 
-    public func errorCaught(ctx: ChannelHandlerContext, error: Error) {
+    public func errorCaught(context: ChannelHandlerContext, error: Error) {
         errors.append(error as! T)
     }
 }
@@ -35,11 +35,11 @@ class HandshakeCompletedHandler: ChannelInboundHandler {
     public typealias InboundIn = Any
     public var handshakeSucceeded = false
 
-    public func userInboundEventTriggered(ctx: ChannelHandlerContext, event: Any) {
+    public func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if let event = event as? TLSUserEvent, case .handshakeCompleted = event {
             self.handshakeSucceeded = true
         }
-        ctx.fireUserInboundEventTriggered(event)
+        context.fireUserInboundEventTriggered(event)
     }
 }
 
@@ -86,7 +86,7 @@ class TLSConfigurationTest: XCTestCase {
         let clientChannel = try clientTLSChannel(context: clientContext, preHandlers:[], postHandlers: [eventHandler, handshakeHandler], group: group, connectingTo: serverChannel.localAddress!)
 
         // We expect the channel to be closed fairly swiftly as the handshake should fail.
-        clientChannel.closeFuture.whenComplete {
+        clientChannel.closeFuture.whenComplete { _ in
             XCTAssertEqual(eventHandler.errors.count, 1)
 
             switch eventHandler.errors[0] {
@@ -120,7 +120,7 @@ class TLSConfigurationTest: XCTestCase {
         let clientChannel = try clientTLSChannel(context: clientContext, preHandlers:[], postHandlers: [eventHandler, handshakeHandler], group: group, connectingTo: serverChannel.localAddress!)
 
         // We expect the channel to be closed fairly swiftly as the handshake should fail.
-        clientChannel.closeFuture.whenComplete {
+        clientChannel.closeFuture.whenComplete { _ in
             XCTAssertEqual(eventHandler.errors.count, 1)
 
             switch eventHandler.errors[0] {
@@ -245,11 +245,11 @@ class TLSConfigurationTest: XCTestCase {
 
         // Wait for a successful flush: that indicates the channel is up.
         var buf = clientChannel.allocator.buffer(capacity: 5)
-        buf.write(string: "hello")
+        buf.writeString("hello")
 
         // Check that we got a handshakeComplete message indicating mutual validation.
         let flushFuture = clientChannel.writeAndFlush(buf)
-        flushFuture.whenComplete {
+        flushFuture.whenComplete { _ in
             let handshakeEvents = eventHandler.events.filter {
                 switch $0 {
                 case .UserEvent(.handshakeCompleted):

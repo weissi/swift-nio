@@ -44,7 +44,7 @@ private enum FileSystemObject {
 // likes to work with them in wire format, so rather than us decoding them we can just encode ours to
 // the wire format and then work with them from there.
 private extension UnsafeBufferPointer where Element == UInt8 {
-    func locateAlpnIdentifier<T>(identifier: UnsafeBufferPointer<T>) -> (index: Int, length: Int)? where T == Element {
+    func locateAlpnIdentifier(identifier: UnsafeBufferPointer<Element>) -> (index: Int, length: Int)? {
         precondition(identifier.count != 0)
         let targetLength = Int(identifier[0])
 
@@ -116,16 +116,16 @@ public final class SSLContext {
     /// configuration.
     internal init(configuration: TLSConfiguration, callbackManager: CallbackManagerProtocol?) throws {
         guard openSSLIsInitialized else { fatalError("Failed to initialize OpenSSL") }
-        guard let ctx = SSL_CTX_new(CNIOOpenSSL_TLS_Method()) else { throw NIOOpenSSLError.unableToAllocateOpenSSLObject }
+        guard let context = SSL_CTX_new(CNIOOpenSSL_TLS_Method()) else { throw NIOOpenSSLError.unableToAllocateOpenSSLObject }
 
         // TODO(cory): It doesn't seem like this initialization should happen here: where?
-        CNIOOpenSSL_SSL_CTX_setAutoECDH(ctx)
+        CNIOOpenSSL_SSL_CTX_setAutoECDH(context)
 
         // First, let's set some basic modes. We set the following:
         // - SSL_MODE_RELEASE_BUFFERS: Because this can save a bunch of memory on idle connections.
         // - SSL_MODE_AUTO_RETRY: Because OpenSSL's default behaviour on SSL_read without this flag is bad.
         //     See https://github.com/openssl/openssl/issues/6234 for more discussion on this.
-        CNIOOpenSSL_SSL_CTX_set_mode(ctx, Int(SSL_MODE_RELEASE_BUFFERS | SSL_MODE_AUTO_RETRY))
+        CNIOOpenSSL_SSL_CTX_set_mode(context, Int(SSL_MODE_RELEASE_BUFFERS | SSL_MODE_AUTO_RETRY))
 
         var opensslOptions = Int(SSL_OP_NO_COMPRESSION)
 
@@ -172,26 +172,26 @@ public final class SSLContext {
         // It's not really very clear here, but this is the actual way to spell SSL_CTX_set_options in Swift code.
         // Sadly, SSL_CTX_set_options is a macro, which means we cannot use it directly, and our modulemap doesn't
         // reveal it in a helpful way, so we write it like this instead.
-        CNIOOpenSSL_SSL_CTX_set_options(ctx, opensslOptions)
+        CNIOOpenSSL_SSL_CTX_set_options(context, opensslOptions)
 
         // Cipher suites. We just pass this straight to OpenSSL.
-        let tls12ReturnCode = SSL_CTX_set_cipher_list(ctx, configuration.cipherSuites)
+        let tls12ReturnCode = SSL_CTX_set_cipher_list(context, configuration.cipherSuites)
         precondition(1 == tls12ReturnCode)
-        let tls13ReturnCode = CNIOOpenSSL_SSL_CTX_set_ciphersuites(ctx, configuration.tls13CipherSuites)
+        let tls13ReturnCode = CNIOOpenSSL_SSL_CTX_set_ciphersuites(context, configuration.tls13CipherSuites)
         precondition(1 == tls13ReturnCode)
 
         // If validation is turned on, set the trust roots and turn on cert validation.
         switch configuration.certificateVerification {
         case .fullVerification, .noHostnameVerification:
-            SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, CNIOOpenSSL_noop_verify_callback)
+            SSL_CTX_set_verify(context, SSL_VERIFY_PEER, CNIOOpenSSL_noop_verify_callback)
 
             switch configuration.trustRoots {
             case .some(.default), .none:
-                precondition(1 == SSL_CTX_set_default_verify_paths(ctx))
+                precondition(1 == SSL_CTX_set_default_verify_paths(context))
             case .some(.file(let f)):
-                try SSLContext.loadVerifyLocations(f, context: .init(ctx))
+                try SSLContext.loadVerifyLocations(f, context: .init(context))
             case .some(.certificates(let certs)):
-                try certs.forEach { try SSLContext.addRootCertificate($0, context: .init(ctx)) }
+                try certs.forEach { try SSLContext.addRootCertificate($0, context: .init(context)) }
             }
         default:
             break
@@ -200,22 +200,22 @@ public final class SSLContext {
         // If we were given a certificate chain to use, load it and its associated private key. Before
         // we do, set up a passphrase callback if we need to.
         if let callbackManager = callbackManager {
-            SSL_CTX_set_default_passwd_cb(ctx, globalOpenSSLPassphraseCallback(buf:size:rwflag:u:))
-            SSL_CTX_set_default_passwd_cb_userdata(ctx, Unmanaged.passUnretained(callbackManager as AnyObject).toOpaque())
+            SSL_CTX_set_default_passwd_cb(context, globalOpenSSLPassphraseCallback(buf:size:rwflag:u:))
+            SSL_CTX_set_default_passwd_cb_userdata(context, Unmanaged.passUnretained(callbackManager as AnyObject).toOpaque())
         }
 
         var leaf = true
         try configuration.certificateChain.forEach {
             switch $0 {
             case .file(let p):
-                SSLContext.useCertificateChainFile(p, context: .init(ctx))
+                SSLContext.useCertificateChainFile(p, context: .init(context))
                 leaf = false
             case .certificate(let cert):
                 if leaf {
-                    try SSLContext.setLeafCertificate(cert, context: .init(ctx))
+                    try SSLContext.setLeafCertificate(cert, context: .init(context))
                     leaf = false
                 } else {
-                    try SSLContext.addAdditionalChainCertificate(cert, context: .init(ctx))
+                    try SSLContext.addAdditionalChainCertificate(cert, context: .init(context))
                 }
             }
         }
@@ -223,24 +223,24 @@ public final class SSLContext {
         if let pkey = configuration.privateKey {
             switch pkey {
             case .file(let p):
-                SSLContext.usePrivateKeyFile(p, context: .init(ctx))
+                SSLContext.usePrivateKeyFile(p, context: .init(context))
             case .privateKey(let key):
-                try SSLContext.setPrivateKey(key, context: .init(ctx))
+                try SSLContext.setPrivateKey(key, context: .init(context))
             }
         }
 
         if configuration.applicationProtocols.count > 0 {
-            try SSLContext.setAlpnProtocols(configuration.applicationProtocols, context: .init(ctx))
-            SSLContext.setAlpnCallback(context: .init(ctx))
+            try SSLContext.setAlpnProtocols(configuration.applicationProtocols, context: .init(context))
+            SSLContext.setAlpnCallback(context: .init(context))
         }
 
-        self.sslContext = .init(ctx)
+        self.sslContext = .init(context)
         self.configuration = configuration
         self.callbackManager = callbackManager
 
         // Always make it possible to get from an SSL_CTX structure back to this.
         let ptrToSelf = Unmanaged.passUnretained(self).toOpaque()
-        CNIOOpenSSL_SSL_CTX_set_app_data(ctx, ptrToSelf)
+        CNIOOpenSSL_SSL_CTX_set_app_data(context, ptrToSelf)
     }
 
     /// Initialize a context that will create multiple connections, all with the same
