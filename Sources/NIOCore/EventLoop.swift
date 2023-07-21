@@ -1273,9 +1273,18 @@ extension EventLoopGroup {
     }
 }
 
-/// This type is intended to be used by libraries which use NIO, and offer their users either the option
+/// This type was intended to be used by libraries which use NIO, and offer their users either the option
 /// to `.share` an existing event loop group or create (and manage) a new one (`.createNew`) and let it be
 /// managed by given library and its lifecycle.
+@available(*, deprecated,
+            message: """
+                     Please use a `group: any EventLoopGroup` parameter instead. If you want to default to a global
+                     singleton group instead, consider
+                     `group: any EventLoopGroup = MultiThreadedEventLoopGroup.globalSingleton` or
+                     similar. Having the option to `.createNew`
+                     EventLoopGroups causes more issues than it solves.
+                     See also: https://github.com/apple/swift-nio/issues/2142
+                     """)
 public enum NIOEventLoopGroupProvider {
     /// Use an `EventLoopGroup` provided by the user.
     /// The owner of this group is responsible for its lifecycle.
@@ -1287,6 +1296,7 @@ public enum NIOEventLoopGroupProvider {
 }
 
 #if swift(>=5.7)
+@available(*, deprecated)
 extension NIOEventLoopGroupProvider: Sendable {}
 #endif
 

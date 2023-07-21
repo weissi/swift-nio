@@ -1389,6 +1389,7 @@ public final class EventLoopTest : XCTestCase {
         waiter.wait()
     }
 
+    @available(*, deprecated)
     func testEventLoopGroupProvider() {
         let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer {
