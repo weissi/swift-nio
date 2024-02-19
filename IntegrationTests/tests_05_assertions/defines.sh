@@ -17,7 +17,7 @@ set -eu
 
 function make_package() {
     cat > "$tmpdir/syscallwrapper/Package.swift" <<"EOF"
-// swift-tools-version:5.2
+// swift-tools-version:5.7
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -31,7 +31,10 @@ let package = Package(
             dependencies: ["CNIOLinux", "CNIODarwin", "NIOCore"]),
         .target(
             name: "CNIOLinux",
-            dependencies: []),
+            dependencies: [],
+            cSettings: [
+                .define("_GNU_SOURCE")
+            ]),
         .target(
             name: "CNIODarwin",
             dependencies: []),

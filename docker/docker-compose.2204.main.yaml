@@ -20,6 +20,7 @@ services:
   test:
     image: swift-nio:22.04-main
     environment:
+      - SWIFT_VERSION=main
       - MAX_ALLOCS_ALLOWED_10000000_asyncsequenceproducer=21
       - MAX_ALLOCS_ALLOWED_1000000_asyncwriter=1000050
       - MAX_ALLOCS_ALLOWED_1000_addHandlers=45050
@@ -34,7 +35,7 @@ services:
       - MAX_ALLOCS_ALLOWED_1000_getHandlers=8050
       - MAX_ALLOCS_ALLOWED_1000_getHandlers_sync=36
       - MAX_ALLOCS_ALLOWED_1000_reqs_1_conn=26400
-      - MAX_ALLOCS_ALLOWED_1000_rst_connections=149050
+      - MAX_ALLOCS_ALLOWED_1000_rst_connections=147000
       - MAX_ALLOCS_ALLOWED_1000_tcpbootstraps=3050
       - MAX_ALLOCS_ALLOWED_1000_tcpconnections=157050
       - MAX_ALLOCS_ALLOWED_1000_udp_reqs=6050

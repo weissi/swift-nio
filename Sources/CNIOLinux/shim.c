@@ -18,12 +18,16 @@ void CNIOLinux_i_do_nothing_just_working_around_a_darwin_toolchain_bug(void) {}
 
 #ifdef __linux__
 
-#define _GNU_SOURCE
+#ifndef _GNU_SOURCE
+#error You must define _GNU_SOURCE
+#endif
+
 #include <CNIOLinux.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdio.h>
 #include <sys/prctl.h>
+#include <sys/syscall.h>
 #include <sys/utsname.h>
 #include <unistd.h>
 #include <assert.h>
@@ -184,5 +188,27 @@ int CNIOLinux_system_info(struct utsname* uname_data) {
 }
 
 const unsigned long CNIOLinux_IOCTL_VM_SOCKETS_GET_LOCAL_CID = IOCTL_VM_SOCKETS_GET_LOCAL_CID;
+
+const char* CNIOLinux_dirent_dname(struct dirent* ent) {
+    return ent->d_name;
+}
+
+int CNIOLinux_renameat2(int oldfd, const char* old, int newfd, const char* newName, unsigned int flags) {
+    // Musl doesn't have renameat2, so we make the raw system call directly
+    return syscall(SYS_renameat2, oldfd, old, newfd, newName, flags);
+}
+
+// Musl also doesn't define the flags for renameat2, so we will do so.
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE 1
+#endif
+#ifndef RENAME_EXCHANGE
+#define RENAME_EXCHANGE  2
+#endif
+
+const int CNIOLinux_O_TMPFILE = O_TMPFILE;
+const unsigned int CNIOLinux_RENAME_NOREPLACE = RENAME_NOREPLACE;
+const unsigned int CNIOLinux_RENAME_EXCHANGE = RENAME_EXCHANGE;
+const int CNIOLinux_AT_EMPTY_PATH = AT_EMPTY_PATH;
 
 #endif
